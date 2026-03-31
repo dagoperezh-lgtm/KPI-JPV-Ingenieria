@@ -175,6 +175,9 @@ with col_chart2:
         st.plotly_chart(fig2, use_container_width=True)
 
 # --- SECCIÓN 4: MOTOR DE REPORTES (EXCEL Y WORD) ---
+import matplotlib.pyplot as plt
+from docx.shared import Inches
+
 st.divider()
 st.subheader("📥 Reportes de Gestión Ejecutiva")
 st.markdown("Descarga los informes formales listos para presentar o archivar.")
@@ -187,42 +190,121 @@ def generar_excel(df):
         df.to_excel(writer, index=False, sheet_name='Datos')
     return output.getvalue()
 
-# Función generadora de Word en memoria
-def generar_word(tipo_per, periodo, t_put, lead_t, cycle_t, sla_comp, ftr, traccion):
+# Función generadora de Gráficos estáticos para Word
+def generar_grafico_tendencia(fechas, valores, titulo, ylabel, color, legend=None, valores2=None, color2=None, legend2=None):
+    plt.figure(figsize=(8, 4))
+    plt.plot(fechas, valores, marker='o', color=color, label=legend, linewidth=2)
+    if valores2 is not None:
+        plt.plot(fechas, valores2, marker='s', color=color2, label=legend2, linewidth=2)
+    plt.title(titulo, fontsize=12, fontweight='bold')
+    plt.ylabel(ylabel, fontsize=10)
+    plt.xticks(rotation=45, ha='right', fontsize=8)
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    if legend or legend2:
+        plt.legend()
+    plt.tight_layout()
+    
+    img_stream = io.BytesIO()
+    plt.savefig(img_stream, format='png', dpi=150)
+    plt.close()
+    img_stream.seek(0)
+    return img_stream
+
+# Función generadora de Word con contexto Histórico
+def generar_word_historico(tipo_per, periodo_actual, df_completo):
     doc = Document()
     doc.add_heading(f'Reporte Ejecutivo de Gestión', 0)
     doc.add_paragraph(f'Tipo de Análisis: {tipo_per}')
-    doc.add_paragraph(f'Periodo Evaluado: {periodo}')
+    doc.add_paragraph(f'Periodo Evaluado: {periodo_actual} y Contexto Histórico')
     
-    doc.add_heading('1. Capacidad y Salud del Portafolio', level=1)
-    doc.add_paragraph('Esta sección evalúa el volumen de trabajo gestionado y el equilibrio operativo del área, asegurando que no se generen cuellos de botella estructurales.')
+    # 0. Agrupar y preparar datos históricos
+    col_periodo = 'Mes' if tipo_per == 'Mensual' else 'Trimestre' if tipo_per == 'Trimestral' else 'Año'
+    col_periodo_in = 'Mes_Ingreso' if tipo_per == 'Mensual' else 'Trimestre_Ingreso' if tipo_per == 'Trimestral' else 'Año_Ingreso'
     
-    doc.add_paragraph(f'• Índice de Entrega (Throughput): {t_put} casos.', style='List Bullet')
-    doc.add_paragraph('Definición: Refleja el volumen exacto de casos cerrados exitosamente en el periodo. Permite visualizar la capacidad operativa real y la productividad del equipo de analistas.')
+    historico_cierres = df_completo.dropna(subset=['Fecha_Cierre']).groupby(col_periodo).agg(
+        Throughput=('ID_Caso', 'count'),
+        Lead_Time=('Dias_Gestion', 'mean'),
+        Cycle_Time=('Dias_Activos', 'mean'),
+        SLA_Cumple=('Cumple_SLA', 'sum'),
+        FTR_Cumple=('First_Time_Right', 'sum')
+    ).reset_index()
     
-    doc.add_paragraph(f'• Tasa de Tracción: {traccion:.1f}%.', style='List Bullet')
-    doc.add_paragraph('Definición: Mide la relación matemática entre los casos que ingresan y los que se logran resolver. Un porcentaje cercano o superior al 100% indica que el equipo procesa a un ritmo saludable, evitando la acumulación de expedientes atrasados (backlog).')
+    historico_cierres['SLA_Compliance'] = (historico_cierres['SLA_Cumple'] / historico_cierres['Throughput']) * 100
+    historico_cierres['FTR'] = (historico_cierres['FTR_Cumple'] / historico_cierres['Throughput']) * 100
     
-    doc.add_heading('2. Agilidad y Flujo Continuo', level=1)
-    doc.add_paragraph('Esta sección mide la velocidad de respuesta del equipo, diferenciando el tiempo total del caso del tiempo efectivo de análisis técnico.')
+    historico_ingresos = df_completo.dropna(subset=['Fecha_Ingreso']).groupby(col_periodo_in).agg(
+        Ingresos=('ID_Caso', 'count')
+    ).reset_index().rename(columns={col_periodo_in: col_periodo})
     
-    doc.add_paragraph(f'• Tiempo Medio de Resolución (Lead Time Integral): {lead_t:.1f} días hábiles.', style='List Bullet')
-    doc.add_paragraph('Definición: Representa el promedio de días hábiles transcurridos desde que un caso ingresa al sistema hasta su resolución final. Visibiliza la agilidad global percibida por los involucrados y la eficiencia general del proceso.')
+    historico = pd.merge(historico_cierres, historico_ingresos, on=col_periodo, how='outer').fillna(0)
+    historico = historico.sort_values(col_periodo).tail(12) # Últimos 12 periodos para claridad visual
+    historico['Tasa_Traccion'] = np.where(historico['Ingresos'] > 0, (historico['Throughput'] / historico['Ingresos']) * 100, 100)
     
-    doc.add_paragraph(f'• Cycle Time Activo (Post-Descargos): {cycle_t:.1f} días hábiles.', style='List Bullet')
-    doc.add_paragraph('Definición: Mide exclusivamente el promedio de días que toma el análisis desde que se reciben los descargos o antecedentes hasta el cierre. Es el indicador más puro de la agilidad técnica interna, ya que aísla los tiempos de espera de respuestas externas.')
+    # Extraer valores exactos del periodo actual
+    datos_actuales = historico[historico[col_periodo] == periodo_actual]
+    if not datos_actuales.empty:
+        t_put = datos_actuales['Throughput'].values[0]
+        lead_t = datos_actuales['Lead_Time'].values[0]
+        cycle_t = datos_actuales['Cycle_Time'].values[0]
+        sla_comp = datos_actuales['SLA_Compliance'].values[0]
+        ftr = datos_actuales['FTR'].values[0]
+        traccion = datos_actuales['Tasa_Traccion'].values[0]
+    else:
+        t_put, lead_t, cycle_t, sla_comp, ftr, traccion = 0, 0, 0, 0, 0, 0
 
+    # --- SECCIÓN 1: CAPACIDAD ---
+    doc.add_heading('1. Capacidad y Salud del Portafolio', level=1)
+    doc.add_paragraph('Esta sección evalúa el volumen de trabajo gestionado y el equilibrio operativo del área, visibilizando la capacidad para mantener el portafolio fluido sin cuellos de botella.')
+    
+    doc.add_paragraph(f'• Índice de Entrega (Throughput): {int(t_put)} casos cerrados en {periodo_actual}.', style='List Bullet')
+    doc.add_paragraph('Definición: Refleja el volumen exacto de casos cerrados exitosamente. Permite visualizar la capacidad operativa real y la productividad constante del equipo de analistas.')
+    
+    doc.add_paragraph(f'• Tasa de Tracción: {traccion:.1f}% en {periodo_actual}.', style='List Bullet')
+    doc.add_paragraph('Definición: Mide la relación matemática entre los casos que ingresan y los que se logran resolver. Un porcentaje cercano o superior al 100% indica que el equipo procesa a un ritmo saludable, evitando atrasos.')
+    
+    img_capacidad = generar_grafico_tendencia(
+        historico[col_periodo], historico['Throughput'], 
+        'Tendencia Histórica: Índice de Entrega (Cierres) vs Ingresos', 'Cantidad de Casos', 
+        '#27ae60', 'Casos Cerrados (Throughput)', historico['Ingresos'], '#2980b9', 'Casos Ingresados'
+    )
+    doc.add_picture(img_capacidad, width=Inches(6.0))
+
+    # --- SECCIÓN 2: AGILIDAD ---
+    doc.add_heading('2. Agilidad y Flujo Continuo', level=1)
+    doc.add_paragraph('Esta sección mide la velocidad de respuesta del equipo, mostrando cómo ha evolucionado el tiempo total del caso frente al tiempo efectivo de análisis técnico.')
+    
+    doc.add_paragraph(f'• Tiempo Medio de Resolución (Lead Time): {lead_t:.1f} días hábiles en {periodo_actual}.', style='List Bullet')
+    doc.add_paragraph('Definición: Promedio de días hábiles transcurridos desde que un caso ingresa hasta su resolución final. Visibiliza la agilidad global y la eficiencia del proceso.')
+    
+    doc.add_paragraph(f'• Cycle Time Activo (Post-Descargos): {cycle_t:.1f} días hábiles en {periodo_actual}.', style='List Bullet')
+    doc.add_paragraph('Definición: Promedio de días que toma el análisis desde que se reciben los antecedentes hasta el cierre. Es el indicador puro de agilidad técnica interna, aislando tiempos de espera de terceros.')
+    
+    img_agilidad = generar_grafico_tendencia(
+        historico[col_periodo], historico['Lead_Time'], 
+        'Tendencia Histórica: Lead Time vs Cycle Time', 'Días Hábiles Promedio', 
+        '#e74c3c', 'Lead Time Integral', historico['Cycle_Time'], '#f39c12', 'Cycle Time Activo'
+    )
+    doc.add_picture(img_agilidad, width=Inches(6.0))
+
+    # --- SECCIÓN 3: CALIDAD ---
     doc.add_heading('3. Excelencia y Cumplimiento', level=1)
-    doc.add_paragraph('Esta sección refleja el rigor técnico, la calidad de la revisión inicial y el nivel de servicio respecto a los estándares normativos.')
+    doc.add_paragraph('Esta sección refleja el rigor técnico histórico, la calidad de la revisión inicial y el nivel de servicio respecto a los estándares establecidos.')
     
-    doc.add_paragraph(f'• Resolución Óptima (SLA Compliance): {sla_comp:.1f}%.', style='List Bullet')
-    doc.add_paragraph('Definición: Indica el porcentaje de casos que fueron cerrados cumpliendo estrictamente con el estándar de tiempo objetivo (actualmente fijado en 15 días hábiles). Es la métrica principal para evaluar el nivel de servicio entregado.')
+    doc.add_paragraph(f'• Resolución Óptima (SLA Compliance): {sla_comp:.1f}% en {periodo_actual}.', style='List Bullet')
+    doc.add_paragraph('Definición: Porcentaje de casos cerrados cumpliendo estrictamente con el estándar de tiempo objetivo (<= 15 días hábiles). Métrica principal de nivel de servicio.')
     
-    doc.add_paragraph(f'• Calidad en Origen (First-Time Right): {ftr:.1f}%.', style='List Bullet')
-    doc.add_paragraph('Definición: Porcentaje de casos que fluyeron desde el ingreso hasta el cierre sin requerir devoluciones, retrocesos o correcciones. Demuestra la prolijidad en el ingreso de datos y la madurez de los filtros de control iniciales.')
+    doc.add_paragraph(f'• Calidad en Origen (First-Time Right): {ftr:.1f}% en {periodo_actual}.', style='List Bullet')
+    doc.add_paragraph('Definición: Porcentaje de casos que fluyeron sin devoluciones o reprocesos. Demuestra prolijidad en el ingreso de datos y madurez de los controles iniciales.')
+    
+    img_calidad = generar_grafico_tendencia(
+        historico[col_periodo], historico['SLA_Compliance'], 
+        'Tendencia Histórica: Cumplimiento SLA y Calidad en Origen (%)', 'Porcentaje de Cumplimiento (%)', 
+        '#8e44ad', 'SLA Compliance (%)', historico['FTR'], '#16a085', 'First-Time Right (%)'
+    )
+    doc.add_picture(img_calidad, width=Inches(6.0))
 
     doc.add_heading('Conclusión Estratégica', level=1)
-    doc.add_paragraph('Los indicadores presentados reflejan la gestión operativa del periodo, alineada a metodologías de flujo continuo y estándares de administración de portafolios de casos.')
+    doc.add_paragraph('La visibilización de estas tendencias históricas permite identificar ciclos de mejora, asegurar el flujo continuo y respaldar formalmente la gestión de excelencia mantenida por el equipo a lo largo del tiempo.')
     
     output = io.BytesIO()
     doc.save(output)
@@ -243,15 +325,10 @@ with col_d1:
 
 # Botón 2: Reporte Formal (Word)
 with col_d2:
-    word_data = generar_word(
+    word_data = generar_word_historico(
         tipo_periodo, 
         periodo_seleccionado, 
-        throughput, 
-        lead_time_promedio, 
-        cycle_time_promedio, 
-        sla_compliance, 
-        first_time_right, 
-        tasa_traccion
+        df_procesado  # Se pasa toda la base de datos para construir la historia
     )
     st.download_button(
         label="📝 Reporte Ejecutivo (Word)",
