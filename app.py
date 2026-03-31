@@ -188,21 +188,41 @@ def generar_excel(df):
     return output.getvalue()
 
 # Función generadora de Word en memoria
-def generar_word(periodo, t_put, lead_t, sla_comp, traccion):
+def generar_word(tipo_per, periodo, t_put, lead_t, cycle_t, sla_comp, ftr, traccion):
     doc = Document()
-    doc.add_heading(f'Reporte Ejecutivo de Gestión - Periodo: {periodo}', 0)
+    doc.add_heading(f'Reporte Ejecutivo de Gestión', 0)
+    doc.add_paragraph(f'Tipo de Análisis: {tipo_per}')
+    doc.add_paragraph(f'Periodo Evaluado: {periodo}')
     
-    doc.add_heading('1. Resumen de Rendimiento', level=1)
-    doc.add_paragraph(f'Durante el periodo seleccionado, el área procesó los casos bajo los estándares definidos, obteniendo los siguientes indicadores críticos:')
+    doc.add_heading('1. Capacidad y Salud del Portafolio', level=1)
+    doc.add_paragraph('Esta sección evalúa el volumen de trabajo gestionado y el equilibrio operativo del área, asegurando que no se generen cuellos de botella estructurales.')
     
-    # Viñetas de KPIs
-    doc.add_paragraph(f'Índice de Entrega (Throughput): {t_put} casos cerrados exitosamente.', style='List Bullet')
-    doc.add_paragraph(f'Tiempo Medio de Resolución (Lead Time): {lead_t:.1f} días hábiles.', style='List Bullet')
-    doc.add_paragraph(f'Resolución Óptima (SLA): {sla_comp:.1f}% de cumplimiento.', style='List Bullet')
-    doc.add_paragraph(f'Tasa de Tracción: {traccion:.1f}% (relación ingreso vs. cierre).', style='List Bullet')
+    doc.add_paragraph(f'• Índice de Entrega (Throughput): {t_put} casos.', style='List Bullet')
+    doc.add_paragraph('Definición: Refleja el volumen exacto de casos cerrados exitosamente en el periodo. Permite visualizar la capacidad operativa real y la productividad del equipo de analistas.')
     
-    doc.add_heading('2. Conclusión Operativa', level=1)
-    doc.add_paragraph('Los indicadores reflejan un flujo operativo enfocado en la agilidad post-descargos y la calidad de resolución técnica.')
+    doc.add_paragraph(f'• Tasa de Tracción: {traccion:.1f}%.', style='List Bullet')
+    doc.add_paragraph('Definición: Mide la relación matemática entre los casos que ingresan y los que se logran resolver. Un porcentaje cercano o superior al 100% indica que el equipo procesa a un ritmo saludable, evitando la acumulación de expedientes atrasados (backlog).')
+    
+    doc.add_heading('2. Agilidad y Flujo Continuo', level=1)
+    doc.add_paragraph('Esta sección mide la velocidad de respuesta del equipo, diferenciando el tiempo total del caso del tiempo efectivo de análisis técnico.')
+    
+    doc.add_paragraph(f'• Tiempo Medio de Resolución (Lead Time Integral): {lead_t:.1f} días hábiles.', style='List Bullet')
+    doc.add_paragraph('Definición: Representa el promedio de días hábiles transcurridos desde que un caso ingresa al sistema hasta su resolución final. Visibiliza la agilidad global percibida por los involucrados y la eficiencia general del proceso.')
+    
+    doc.add_paragraph(f'• Cycle Time Activo (Post-Descargos): {cycle_t:.1f} días hábiles.', style='List Bullet')
+    doc.add_paragraph('Definición: Mide exclusivamente el promedio de días que toma el análisis desde que se reciben los descargos o antecedentes hasta el cierre. Es el indicador más puro de la agilidad técnica interna, ya que aísla los tiempos de espera de respuestas externas.')
+
+    doc.add_heading('3. Excelencia y Cumplimiento', level=1)
+    doc.add_paragraph('Esta sección refleja el rigor técnico, la calidad de la revisión inicial y el nivel de servicio respecto a los estándares normativos.')
+    
+    doc.add_paragraph(f'• Resolución Óptima (SLA Compliance): {sla_comp:.1f}%.', style='List Bullet')
+    doc.add_paragraph('Definición: Indica el porcentaje de casos que fueron cerrados cumpliendo estrictamente con el estándar de tiempo objetivo (actualmente fijado en 15 días hábiles). Es la métrica principal para evaluar el nivel de servicio entregado.')
+    
+    doc.add_paragraph(f'• Calidad en Origen (First-Time Right): {ftr:.1f}%.', style='List Bullet')
+    doc.add_paragraph('Definición: Porcentaje de casos que fluyeron desde el ingreso hasta el cierre sin requerir devoluciones, retrocesos o correcciones. Demuestra la prolijidad en el ingreso de datos y la madurez de los filtros de control iniciales.')
+
+    doc.add_heading('Conclusión Estratégica', level=1)
+    doc.add_paragraph('Los indicadores presentados reflejan la gestión operativa del periodo, alineada a metodologías de flujo continuo y estándares de administración de portafolios de casos.')
     
     output = io.BytesIO()
     doc.save(output)
@@ -223,11 +243,20 @@ with col_d1:
 
 # Botón 2: Reporte Formal (Word)
 with col_d2:
-    word_data = generar_word(periodo_seleccionado, throughput, lead_time_promedio, sla_compliance, tasa_traccion)
+    word_data = generar_word(
+        tipo_periodo, 
+        periodo_seleccionado, 
+        throughput, 
+        lead_time_promedio, 
+        cycle_time_promedio, 
+        sla_compliance, 
+        first_time_right, 
+        tasa_traccion
+    )
     st.download_button(
         label="📝 Reporte Ejecutivo (Word)",
         data=word_data,
-        file_name=f"Reporte_Ejecutivo_{periodo_seleccionado}.docx",
+        file_name=f"Reporte_Ejecutivo_{tipo_periodo}_{periodo_seleccionado}.docx",
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         use_container_width=True
     )
