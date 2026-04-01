@@ -14,7 +14,7 @@ st.set_page_config(page_title="Dashboard de Gestión: Procesos y Tendencias", la
 
 @st.cache_data
 def generar_datos_prueba():
-    """Genera datos de prueba robustos (3 años de historia) para visualizar tendencias reales."""
+    """Genera datos de prueba robustos para visualizar tendencias reales."""
     np.random.seed(42)
     hoy = datetime(2026, 4, 1) 
     areas = ["Ingeniería y Energía", "Equipos Móviles"]
@@ -28,7 +28,6 @@ def generar_datos_prueba():
         "Cerrado": ["Cierre Administrativo", "Resolución Emitida"]
     }
 
-    # Generar casos distribuidos en los últimos 3 años (1000 días)
     fechas_ingreso = [hoy - timedelta(days=int(x)) for x in np.random.randint(2, 1000, 1500)]
     datos = []
     
@@ -43,7 +42,6 @@ def generar_datos_prueba():
         if es_cerrado:
             estado = "Cerrado"
             subestado = np.random.choice(subestados_map["Cerrado"])
-            # Casos de Ingeniería tardan más por naturaleza
             base_resolucion = np.random.randint(15, 60) if area == "Ingeniería y Energía" else np.random.randint(5, 30)
             dias_resolucion = min(base_resolucion, dias_desde_ingreso)
             fecha_cierre = f + timedelta(days=max(1, dias_resolucion))
@@ -71,15 +69,43 @@ def generar_datos_prueba():
 st.sidebar.title("Configuración y Carga")
 archivo_subido = st.sidebar.file_uploader("Cargar Reporte de Casos (CSV/Excel)", type=["csv", "xlsx"])
 
+# --- MOTOR DE HOMOLOGACIÓN DE DATOS ---
 if archivo_subido is not None:
     try:
+        # Selector para saltar filas en blanco del Excel
+        filas_saltar = st.sidebar.number_input("Filas a saltar (Encabezado desfasado)", min_value=0, max_value=20, value=0)
+        
         if archivo_subido.name.endswith('.csv'):
-            df_raw = pd.read_csv(archivo_subido)
+            df_crudo = pd.read_csv(archivo_subido, skiprows=filas_saltar)
         else:
-            df_raw = pd.read_excel(archivo_subido)
-        st.sidebar.success("¡Archivo cargado con éxito!")
+            df_crudo = pd.read_excel(archivo_subido, skiprows=filas_saltar)
+            
+        columnas_reales = df_crudo.columns.tolist()
+        st.sidebar.success("Archivo leído. Mapea las columnas clave:")
+        
+        # Mapeo dinámico para evitar KeyErrors
+        col_id = st.sidebar.selectbox("Columna ID Caso", columnas_reales, index=0)
+        col_area = st.sidebar.selectbox("Columna Área de Negocio", columnas_reales, index=1 if len(columnas_reales)>1 else 0)
+        col_liq = st.sidebar.selectbox("Columna Liquidador", columnas_reales, index=2 if len(columnas_reales)>2 else 0)
+        col_estado = st.sidebar.selectbox("Columna Estado", columnas_reales, index=3 if len(columnas_reales)>3 else 0)
+        col_subestado = st.sidebar.selectbox("Columna Subestado", columnas_reales, index=4 if len(columnas_reales)>4 else 0)
+        col_fecha_in = st.sidebar.selectbox("Columna Fecha Ingreso", columnas_reales, index=5 if len(columnas_reales)>5 else 0)
+        col_fecha_mod = st.sidebar.selectbox("Columna Último Cambio", columnas_reales, index=6 if len(columnas_reales)>6 else 0)
+        col_fecha_out = st.sidebar.selectbox("Columna Fecha Cierre", columnas_reales, index=7 if len(columnas_reales)>7 else 0)
+
+        df_raw = df_crudo.rename(columns={
+            col_id: "ID_Caso",
+            col_area: "Area_Negocio",
+            col_liq: "Liquidador",
+            col_estado: "Estado_Actual",
+            col_subestado: "Subestado_Actual",
+            col_fecha_in: "Fecha_Ingreso",
+            col_fecha_mod: "Fecha_Ultimo_Cambio",
+            col_fecha_out: "Fecha_Cierre"
+        })
+        
     except Exception as e:
-        st.sidebar.error(f"Error al leer el archivo: {e}")
+        st.sidebar.error(f"Error al procesar el archivo: {e}")
         df_raw = generar_datos_prueba()
 else:
     st.sidebar.info("Usando datos de demostración.")
@@ -87,16 +113,19 @@ else:
 
 # --- SECCIÓN 2: MOTOR DE CÁLCULO Y SEGMENTACIÓN ---
 def procesar_datos_integrales(df):
-    df['Fecha_Ingreso'] = pd.to_datetime(df['Fecha_Ingreso'])
-    df['Fecha_Ultimo_Cambio'] = pd.to_datetime(df['Fecha_Ultimo_Cambio'])
+    df['Fecha_Ingreso'] = pd.to_datetime(df['Fecha_Ingreso'], errors='coerce')
+    df['Fecha_Ultimo_Cambio'] = pd.to_datetime(df['Fecha_Ultimo_Cambio'], errors='coerce')
     df['Fecha_Cierre'] = pd.to_datetime(df['Fecha_Cierre'], errors='coerce')
     
-    df['Es_Abierto'] = df['Estado_Actual'] != 'Cerrado'
+    # Rellenar fechas vacías en casos abiertos con el ingreso
+    df['Fecha_Ultimo_Cambio'] = df['Fecha_Ultimo_Cambio'].fillna(df['Fecha_Ingreso'])
     
-    # Extraer periodos (Útiles para históricos e ingresos)
-    df['Mes_Ingreso'] = df['Fecha_Ingreso'].dt.to_period('M').astype(str)
-    df['Trimestre_Ingreso'] = df['Fecha_Ingreso'].dt.to_period('Q').astype(str)
-    df['Año_Ingreso'] = df['Fecha_Ingreso'].dt.year.astype(str)
+    df['Es_Abierto'] = (df['Estado_Actual'] != 'Cerrado') & df['Fecha_Cierre'].isna()
+    
+    # Extraer periodos
+    df['Mes_Cierre'] = df['Fecha_Cierre'].dt.to_period('M').astype(str)
+    df['Trimestre_Cierre'] = df['Fecha_Cierre'].dt.to_period('Q').astype(str)
+    df['Año_Cierre'] = df['Fecha_Cierre'].dt.year.astype(str).replace('nan', 'Pendiente')
     
     # Cálculos para casos Abiertos (WIP actual)
     df_abiertos = df[df['Es_Abierto']].copy()
@@ -113,16 +142,12 @@ def procesar_datos_integrales(df):
         opciones = ['0-15 Días', '16-30 Días', '+30 Días (Crítico)']
         df_abiertos['Tramo_Aging'] = np.select(condiciones, opciones, default='Desconocido')
     
-    # Cálculos para casos Cerrados (Histórico/Tendencias)
+    # Cálculos para casos Cerrados
     df_cerrados = df[~df['Es_Abierto']].copy()
     if not df_cerrados.empty:
         fechas_in = df_cerrados['Fecha_Ingreso'].values.astype('datetime64[D]')
         fechas_out = df_cerrados['Fecha_Cierre'].values.astype('datetime64[D]')
         df_cerrados['Lead_Time_Total'] = np.busday_count(fechas_in, fechas_out)
-        
-        df_cerrados['Mes_Cierre'] = df_cerrados['Fecha_Cierre'].dt.to_period('M').astype(str)
-        df_cerrados['Trimestre_Cierre'] = df_cerrados['Fecha_Cierre'].dt.to_period('Q').astype(str)
-        df_cerrados['Año_Cierre'] = df_cerrados['Fecha_Cierre'].dt.year.astype(str)
         
     return df_abiertos, df_cerrados, df
 
@@ -143,7 +168,8 @@ else:
     periodos_disp = sorted(df_cerrados['Año_Cierre'].unique(), reverse=True) if not df_cerrados.empty else []
     col_cierre = 'Año_Cierre'
 
-periodo_seleccionado = st.sidebar.selectbox("Seleccionar Periodo Final:", periodos_disp) if periodos_disp else None
+periodos_limpios = [p for p in periodos_disp if p != 'NaT' and p != 'Pendiente']
+periodo_seleccionado = st.sidebar.selectbox("Seleccionar Periodo Final:", periodos_limpios) if periodos_limpios else None
 
 # --- SECCIÓN 3: MOTOR DE REPORTE VISUAL (DASHBOARD) ---
 st.title("📊 Panel de Gestión Integral")
@@ -188,38 +214,36 @@ def renderizar_panel_area(df_area_abiertos, area_nombre):
     st.plotly_chart(fig_matrix, use_container_width=True)
 
 with tab_energia:
-    renderizar_panel_area(df_abiertos[df_abiertos['Area_Negocio'] == 'Ingeniería y Energía'], 'Ingeniería y Energía')
+    # Ajustar el nombre del área según cómo venga en el Excel real (Sensible a mayúsculas)
+    renderizar_panel_area(df_abiertos[df_abiertos['Area_Negocio'].str.contains('Ingeniería', case=False, na=False)], 'Ingeniería y Energía')
 
 with tab_moviles:
-    renderizar_panel_area(df_abiertos[df_abiertos['Area_Negocio'] == 'Equipos Móviles'], 'Equipos Móviles')
+    renderizar_panel_area(df_abiertos[df_abiertos['Area_Negocio'].str.contains('Móviles', case=False, na=False)], 'Equipos Móviles')
 
 with tab_tendencias:
     st.subheader(f"Análisis Retrospectivo y Tendencias ({tipo_periodo})")
     if not df_cerrados.empty and periodo_seleccionado:
-        # Filtrar datos de cierre por el periodo actual para KPIs base
         df_cierre_periodo = df_cerrados[df_cerrados[col_cierre] == periodo_seleccionado]
         
         c1, c2, c3 = st.columns(3)
         with c1:
             st.metric("Total Resoluciones del Periodo", len(df_cierre_periodo))
         with c2:
-            lt_energia = df_cierre_periodo[df_cierre_periodo['Area_Negocio'] == 'Ingeniería y Energía']['Lead_Time_Total'].mean()
+            lt_energia = df_cierre_periodo[df_cierre_periodo['Area_Negocio'].str.contains('Ingeniería', case=False, na=False)]['Lead_Time_Total'].mean()
             st.metric("Lead Time Ingeniería (Días)", f"{lt_energia:.1f}" if pd.notna(lt_energia) else "N/A")
         with c3:
-            lt_moviles = df_cierre_periodo[df_cierre_periodo['Area_Negocio'] == 'Equipos Móviles']['Lead_Time_Total'].mean()
+            lt_moviles = df_cierre_periodo[df_cierre_periodo['Area_Negocio'].str.contains('Móviles', case=False, na=False)]['Lead_Time_Total'].mean()
             st.metric("Lead Time Móviles (Días)", f"{lt_moviles:.1f}" if pd.notna(lt_moviles) else "N/A")
             
         st.divider()
         
-        # Gráficos de Tendencia Histórica (Usando la base completa, agrupada por el tipo de periodo)
         st.markdown("#### Tendencias a lo largo del tiempo")
         historico_agrupado = df_cerrados.groupby([col_cierre, 'Area_Negocio']).agg(
             Volumen=('ID_Caso', 'count'),
             Lead_Time=('Lead_Time_Total', 'mean')
         ).reset_index().sort_values(col_cierre)
         
-        # Limitar a los últimos 12 periodos para evitar saturación visual
-        ultimos_periodos = sorted(historico_agrupado[col_cierre].unique())[-12:]
+        ultimos_periodos = sorted([p for p in historico_agrupado[col_cierre].unique() if p != 'NaT'])[-12:]
         historico_filtrado = historico_agrupado[historico_agrupado[col_cierre].isin(ultimos_periodos)]
 
         col_t1, col_t2 = st.columns(2)
@@ -267,7 +291,6 @@ def generar_word_reporte(df_abiertos, df_cerrados, periodo_sel, col_cierre):
     doc.add_heading('Reporte Ejecutivo de Operaciones e Ingeniería', 0)
     doc.add_paragraph(f'Periodo de Corte: {periodo_sel}')
     
-    # Sección 1: Análisis de WIP
     doc.add_heading('1. Estado Actual del Portafolio (WIP)', level=1)
     doc.add_paragraph(f'Total de casos en curso a la fecha: {len(df_abiertos)} casos.')
     
@@ -275,13 +298,11 @@ def generar_word_reporte(df_abiertos, df_cerrados, periodo_sel, col_cierre):
         aging = df_abiertos['Tramo_Aging'].value_counts()
         doc.add_paragraph(f"• Casos en Riesgo (+30 Días Estancados): {aging.get('+30 Días (Crítico)', 0)}")
     
-    # Sección 2: Desempeño Histórico
     doc.add_heading(f'2. Cierres y Tendencias', level=1)
     if not df_cerrados.empty and periodo_sel:
         datos_periodo = df_cerrados[df_cerrados[col_cierre] == periodo_sel]
         doc.add_paragraph(f'Volumen resuelto en el periodo: {len(datos_periodo)} casos.')
         
-        # Agrupar tendencias para el gráfico del Word
         tendencia = df_cerrados.groupby(col_cierre)['Lead_Time_Total'].mean().reset_index().tail(6)
         if len(tendencia) > 1:
             img_trend = generar_grafico_mpl(tendencia, col_cierre, 'Lead_Time_Total', 'Evolución Lead Time (Últimos periodos)', 'Días Promedio', '#2980b9')
@@ -307,3 +328,4 @@ with col_d2:
                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
     else:
         st.info("Sube datos para habilitar el reporte en Word.")
+        
