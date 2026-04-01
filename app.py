@@ -72,24 +72,25 @@ archivo_subido = st.sidebar.file_uploader("Cargar Reporte de Casos (CSV/Excel)",
 # --- MOTOR DE HOMOLOGACIÓN DE DATOS ---
 if archivo_subido is not None:
     try:
-        # Selector para saltar filas en blanco del Excel
         filas_saltar = st.sidebar.number_input("Filas a saltar (Encabezado desfasado)", min_value=0, max_value=20, value=0)
         
         if archivo_subido.name.endswith('.csv'):
             df_crudo = pd.read_csv(archivo_subido, skiprows=filas_saltar)
         else:
-            df_crudo = pd.read_excel(archivo_subido, skiprows=filas_saltar)
+            # Lector de múltiples pestañas para Excel
+            xl = pd.ExcelFile(archivo_subido)
+            hoja_seleccionada = st.sidebar.selectbox("Selecciona la pestaña de tu Excel", xl.sheet_names)
+            df_crudo = pd.read_excel(archivo_subido, sheet_name=hoja_seleccionada, skiprows=filas_saltar)
             
         columnas_reales = df_crudo.columns.tolist()
         st.sidebar.success("Archivo leído. Mapea las columnas clave:")
         
-        # Mapeo dinámico para evitar KeyErrors
         col_id = st.sidebar.selectbox("Columna ID Caso", columnas_reales, index=0)
-        col_area = st.sidebar.selectbox("Columna Área de Negocio", columnas_reales, index=1 if len(columnas_reales)>1 else 0)
+        col_area = st.sidebar.selectbox("Columna Área/División", columnas_reales, index=1 if len(columnas_reales)>1 else 0)
         col_liq = st.sidebar.selectbox("Columna Liquidador", columnas_reales, index=2 if len(columnas_reales)>2 else 0)
         col_estado = st.sidebar.selectbox("Columna Estado", columnas_reales, index=3 if len(columnas_reales)>3 else 0)
         col_subestado = st.sidebar.selectbox("Columna Subestado", columnas_reales, index=4 if len(columnas_reales)>4 else 0)
-        col_fecha_in = st.sidebar.selectbox("Columna Fecha Ingreso", columnas_reales, index=5 if len(columnas_reales)>5 else 0)
+        col_fecha_in = st.sidebar.selectbox("Columna Fecha Ingreso/Creado", columnas_reales, index=5 if len(columnas_reales)>5 else 0)
         col_fecha_mod = st.sidebar.selectbox("Columna Último Cambio", columnas_reales, index=6 if len(columnas_reales)>6 else 0)
         col_fecha_out = st.sidebar.selectbox("Columna Fecha Cierre", columnas_reales, index=7 if len(columnas_reales)>7 else 0)
 
@@ -105,7 +106,7 @@ if archivo_subido is not None:
         })
         
     except Exception as e:
-        st.sidebar.error(f"Error al procesar el archivo: {e}")
+        st.sidebar.error(f"Error al procesar el archivo. Revisa las filas a saltar. Detalle: {e}")
         df_raw = generar_datos_prueba()
 else:
     st.sidebar.info("Usando datos de demostración.")
@@ -117,20 +118,17 @@ def procesar_datos_integrales(df):
     df['Fecha_Ultimo_Cambio'] = pd.to_datetime(df['Fecha_Ultimo_Cambio'], errors='coerce')
     df['Fecha_Cierre'] = pd.to_datetime(df['Fecha_Cierre'], errors='coerce')
     
-    # Rellenar fechas vacías en casos abiertos con el ingreso
     df['Fecha_Ultimo_Cambio'] = df['Fecha_Ultimo_Cambio'].fillna(df['Fecha_Ingreso'])
     
     df['Es_Abierto'] = (df['Estado_Actual'] != 'Cerrado') & df['Fecha_Cierre'].isna()
     
-    # Extraer periodos
     df['Mes_Cierre'] = df['Fecha_Cierre'].dt.to_period('M').astype(str)
     df['Trimestre_Cierre'] = df['Fecha_Cierre'].dt.to_period('Q').astype(str)
     df['Año_Cierre'] = df['Fecha_Cierre'].dt.year.astype(str).replace('nan', 'Pendiente')
     
-    # Cálculos para casos Abiertos (WIP actual)
     df_abiertos = df[df['Es_Abierto']].copy()
     if not df_abiertos.empty:
-        # CAMBIO QUIRÚRGICO: Blindaje contra NaT. Rellena con la fecha de hoy para evitar que np.busday_count colapse.
+        # Blindaje contra NaT para evitar ValueError
         fecha_hoy_pd = pd.to_datetime('today').normalize()
         df_abiertos['Fecha_Ultimo_Cambio'] = df_abiertos['Fecha_Ultimo_Cambio'].fillna(fecha_hoy_pd)
         
@@ -146,10 +144,9 @@ def procesar_datos_integrales(df):
         opciones = ['0-15 Días', '16-30 Días', '+30 Días (Crítico)']
         df_abiertos['Tramo_Aging'] = np.select(condiciones, opciones, default='Desconocido')
     
-    # Cálculos para casos Cerrados
     df_cerrados = df[~df['Es_Abierto']].copy()
     if not df_cerrados.empty:
-        # CAMBIO QUIRÚRGICO: Eliminar los NaT solo en este dataframe de cálculo para no arruinar el busday_count
+        # Blindaje para evitar ValueError en casos cerrados
         df_cerrados = df_cerrados.dropna(subset=['Fecha_Ingreso', 'Fecha_Cierre']).copy()
         if not df_cerrados.empty:
             fechas_in = df_cerrados['Fecha_Ingreso'].values.astype('datetime64[D]')
@@ -188,7 +185,10 @@ tab_energia, tab_moviles, tab_tendencias = st.tabs(["⚡ WIP: Ingeniería y Ener
 
 def renderizar_panel_area(df_area_abiertos, area_nombre):
     if df_area_abiertos.empty:
-        st.success(f"No hay casos activos en {area_nombre}.")
+        st.success(f"No hay casos activos detectados en la selección de {area_nombre}.")
+        if not df_abiertos.empty and 'Area_Negocio' in df_abiertos.columns:
+            areas_reales = df_abiertos['Area_Negocio'].dropna().unique()
+            st.info(f"💡 Nombres de áreas detectados en tu archivo: {', '.join(map(str, areas_reales))}")
         return
     
     st.markdown(f"**Total Casos en Curso (WIP): {len(df_area_abiertos)}**")
@@ -223,11 +223,10 @@ def renderizar_panel_area(df_area_abiertos, area_nombre):
     st.plotly_chart(fig_matrix, use_container_width=True)
 
 with tab_energia:
-    # Ajustar el nombre del área según cómo venga en el Excel real (Sensible a mayúsculas)
-    renderizar_panel_area(df_abiertos[df_abiertos['Area_Negocio'].str.contains('Ingeniería', case=False, na=False)], 'Ingeniería y Energía')
+    renderizar_panel_area(df_abiertos[df_abiertos['Area_Negocio'].astype(str).str.contains('Ingeniería', case=False, na=False)], 'Ingeniería y Energía')
 
 with tab_moviles:
-    renderizar_panel_area(df_abiertos[df_abiertos['Area_Negocio'].str.contains('Móviles', case=False, na=False)], 'Equipos Móviles')
+    renderizar_panel_area(df_abiertos[df_abiertos['Area_Negocio'].astype(str).str.contains('Móviles|Movil|Móvil', case=False, na=False)], 'Equipos Móviles')
 
 with tab_tendencias:
     st.subheader(f"Análisis Retrospectivo y Tendencias ({tipo_periodo})")
@@ -238,10 +237,10 @@ with tab_tendencias:
         with c1:
             st.metric("Total Resoluciones del Periodo", len(df_cierre_periodo))
         with c2:
-            lt_energia = df_cierre_periodo[df_cierre_periodo['Area_Negocio'].str.contains('Ingeniería', case=False, na=False)]['Lead_Time_Total'].mean()
+            lt_energia = df_cierre_periodo[df_cierre_periodo['Area_Negocio'].astype(str).str.contains('Ingeniería', case=False, na=False)]['Lead_Time_Total'].mean()
             st.metric("Lead Time Ingeniería (Días)", f"{lt_energia:.1f}" if pd.notna(lt_energia) else "N/A")
         with c3:
-            lt_moviles = df_cierre_periodo[df_cierre_periodo['Area_Negocio'].str.contains('Móviles', case=False, na=False)]['Lead_Time_Total'].mean()
+            lt_moviles = df_cierre_periodo[df_cierre_periodo['Area_Negocio'].astype(str).str.contains('Móviles|Movil|Móvil', case=False, na=False)]['Lead_Time_Total'].mean()
             st.metric("Lead Time Móviles (Días)", f"{lt_moviles:.1f}" if pd.notna(lt_moviles) else "N/A")
             
         st.divider()
