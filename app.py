@@ -130,6 +130,10 @@ def procesar_datos_integrales(df):
     # Cálculos para casos Abiertos (WIP actual)
     df_abiertos = df[df['Es_Abierto']].copy()
     if not df_abiertos.empty:
+        # CAMBIO QUIRÚRGICO: Blindaje contra NaT. Rellena con la fecha de hoy para evitar que np.busday_count colapse.
+        fecha_hoy_pd = pd.to_datetime('today').normalize()
+        df_abiertos['Fecha_Ultimo_Cambio'] = df_abiertos['Fecha_Ultimo_Cambio'].fillna(fecha_hoy_pd)
+        
         fechas_cambio = df_abiertos['Fecha_Ultimo_Cambio'].values.astype('datetime64[D]')
         fecha_hoy = np.datetime64('today')
         df_abiertos['Dias_En_Subestado'] = np.busday_count(fechas_cambio, fecha_hoy)
@@ -145,10 +149,15 @@ def procesar_datos_integrales(df):
     # Cálculos para casos Cerrados
     df_cerrados = df[~df['Es_Abierto']].copy()
     if not df_cerrados.empty:
-        fechas_in = df_cerrados['Fecha_Ingreso'].values.astype('datetime64[D]')
-        fechas_out = df_cerrados['Fecha_Cierre'].values.astype('datetime64[D]')
-        df_cerrados['Lead_Time_Total'] = np.busday_count(fechas_in, fechas_out)
-        
+        # CAMBIO QUIRÚRGICO: Eliminar los NaT solo en este dataframe de cálculo para no arruinar el busday_count
+        df_cerrados = df_cerrados.dropna(subset=['Fecha_Ingreso', 'Fecha_Cierre']).copy()
+        if not df_cerrados.empty:
+            fechas_in = df_cerrados['Fecha_Ingreso'].values.astype('datetime64[D]')
+            fechas_out = df_cerrados['Fecha_Cierre'].values.astype('datetime64[D]')
+            df_cerrados['Lead_Time_Total'] = np.busday_count(fechas_in, fechas_out)
+        else:
+            df_cerrados['Lead_Time_Total'] = 0
+            
     return df_abiertos, df_cerrados, df
 
 df_abiertos, df_cerrados, df_master = procesar_datos_integrales(df_raw)
@@ -238,24 +247,25 @@ with tab_tendencias:
         st.divider()
         
         st.markdown("#### Tendencias a lo largo del tiempo")
-        historico_agrupado = df_cerrados.groupby([col_cierre, 'Area_Negocio']).agg(
-            Volumen=('ID_Caso', 'count'),
-            Lead_Time=('Lead_Time_Total', 'mean')
-        ).reset_index().sort_values(col_cierre)
-        
-        ultimos_periodos = sorted([p for p in historico_agrupado[col_cierre].unique() if p != 'NaT'])[-12:]
-        historico_filtrado = historico_agrupado[historico_agrupado[col_cierre].isin(ultimos_periodos)]
-
-        col_t1, col_t2 = st.columns(2)
-        with col_t1:
-            fig_vol = px.line(historico_filtrado, x=col_cierre, y='Volumen', color='Area_Negocio', markers=True,
-                              title="Volumen de Resolución (Throughput) Histórico")
-            st.plotly_chart(fig_vol, use_container_width=True)
+        if 'Lead_Time_Total' in df_cerrados.columns:
+            historico_agrupado = df_cerrados.groupby([col_cierre, 'Area_Negocio']).agg(
+                Volumen=('ID_Caso', 'count'),
+                Lead_Time=('Lead_Time_Total', 'mean')
+            ).reset_index().sort_values(col_cierre)
             
-        with col_t2:
-            fig_lt_hist = px.line(historico_filtrado, x=col_cierre, y='Lead_Time', color='Area_Negocio', markers=True,
-                                  title="Evolución del Lead Time Promedio")
-            st.plotly_chart(fig_lt_hist, use_container_width=True)
+            ultimos_periodos = sorted([p for p in historico_agrupado[col_cierre].unique() if p != 'NaT'])[-12:]
+            historico_filtrado = historico_agrupado[historico_agrupado[col_cierre].isin(ultimos_periodos)]
+
+            col_t1, col_t2 = st.columns(2)
+            with col_t1:
+                fig_vol = px.line(historico_filtrado, x=col_cierre, y='Volumen', color='Area_Negocio', markers=True,
+                                  title="Volumen de Resolución (Throughput) Histórico")
+                st.plotly_chart(fig_vol, use_container_width=True)
+                
+            with col_t2:
+                fig_lt_hist = px.line(historico_filtrado, x=col_cierre, y='Lead_Time', color='Area_Negocio', markers=True,
+                                      title="Evolución del Lead Time Promedio")
+                st.plotly_chart(fig_lt_hist, use_container_width=True)
 
 # --- SECCIÓN 4: MOTOR DE REPORTES EXPORTABLES (EXCEL Y WORD) ---
 st.divider()
@@ -303,10 +313,11 @@ def generar_word_reporte(df_abiertos, df_cerrados, periodo_sel, col_cierre):
         datos_periodo = df_cerrados[df_cerrados[col_cierre] == periodo_sel]
         doc.add_paragraph(f'Volumen resuelto en el periodo: {len(datos_periodo)} casos.')
         
-        tendencia = df_cerrados.groupby(col_cierre)['Lead_Time_Total'].mean().reset_index().tail(6)
-        if len(tendencia) > 1:
-            img_trend = generar_grafico_mpl(tendencia, col_cierre, 'Lead_Time_Total', 'Evolución Lead Time (Últimos periodos)', 'Días Promedio', '#2980b9')
-            doc.add_picture(img_trend, width=Inches(6.0))
+        if 'Lead_Time_Total' in df_cerrados.columns:
+            tendencia = df_cerrados.groupby(col_cierre)['Lead_Time_Total'].mean().reset_index().tail(6)
+            if len(tendencia) > 1:
+                img_trend = generar_grafico_mpl(tendencia, col_cierre, 'Lead_Time_Total', 'Evolución Lead Time (Últimos periodos)', 'Días Promedio', '#2980b9')
+                doc.add_picture(img_trend, width=Inches(6.0))
             
     output = io.BytesIO()
     doc.save(output)
@@ -328,4 +339,3 @@ with col_d2:
                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
     else:
         st.info("Sube datos para habilitar el reporte en Word.")
-        
