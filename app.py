@@ -31,13 +31,13 @@ def generar_datos_prueba():
         estado = "Cerrado" if es_cerrado else "En Análisis"
         
         datos.append({
-            "Número de caso": f"CASO-{np.random.randint(100000, 999999)}",
-            "División": area,
-            "Ajustador senior": liquidador,
-            "Estado": estado,
-            "Sub estado": "Subestado de prueba",
-            "Creado en": f,
-            "Fecha de cierre": f + timedelta(days=np.random.randint(5, 60)) if es_cerrado else pd.NaT,
+            "ID_Caso": f"CASO-{np.random.randint(100000, 999999)}",
+            "Area_Negocio": area,
+            "Liquidador": liquidador,
+            "Estado_Actual": estado,
+            "Subestado_Actual": "Subestado de prueba",
+            "Fecha_Ingreso": f,
+            "Fecha_Cierre": f + timedelta(days=np.random.randint(5, 60)) if es_cerrado else pd.NaT,
             "Días desde asignación": np.random.randint(1, 100),
             "Días desde contacto": np.random.randint(1, 10),
             "Días entre inspección e asignación": np.random.randint(1, 15),
@@ -94,7 +94,7 @@ if archivo_subido is not None:
         col_fecha_in = st.sidebar.selectbox("Columna Creado en", columnas_reales, index=idx_in)
         col_fecha_out = st.sidebar.selectbox("Columna Fecha Cierre", columnas_reales, index=idx_out)
 
-        # Renombramos solo lo fundamental para el sistema, el resto (Días y Montos) pasa tal cual
+        # Renombramos solo lo fundamental para el sistema, el resto pasa tal cual
         df_raw = df_crudo.rename(columns={
             col_id: "ID_Caso",
             col_area: "Area_Negocio",
@@ -114,6 +114,14 @@ else:
 
 # --- SECCIÓN 2: MOTOR DE CÁLCULO ESTRICTO ---
 def procesar_datos_integrales(df):
+    # BLINDAJE ANTI-KEYERROR: Asegura que las columnas existan aunque el Excel falle
+    for col in ['Estado_Actual', 'Subestado_Actual', 'Area_Negocio', 'Liquidador']:
+        if col not in df.columns:
+            df[col] = 'Desconocido'
+    for col in ['Fecha_Ingreso', 'Fecha_Cierre']:
+        if col not in df.columns:
+            df[col] = pd.NaT
+
     df['Estado_Actual'] = df['Estado_Actual'].fillna('Desconocido').astype(str).str.strip().str.upper()
     df['Subestado_Actual'] = df['Subestado_Actual'].fillna('Desconocido').astype(str).str.strip().str.upper()
     df['Area_Negocio'] = df['Area_Negocio'].fillna('Sin Área').astype(str).str.strip()
@@ -125,7 +133,6 @@ def procesar_datos_integrales(df):
     # 2. DETECCIÓN Y FILTRO DE TIEMPOS DE RESIDENCIA (Columnas "Días")
     cols_dias = [col for col in df.columns if 'Días' in col or 'Dias' in col]
     for c in cols_dias:
-        # Convertimos a numérico, lo que sea texto o vacío queda en 0
         df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
         # FILTRO: Eliminar errores lógicos (outliers de > 1500 días)
         df = df[df[c] < 1500]
