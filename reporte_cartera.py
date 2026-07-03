@@ -9,6 +9,7 @@ Sirve para cualquier corte de cartera: por Corredora, Compañía de seguros
 """
 import io
 import os
+import re
 from datetime import datetime
 
 import pandas as pd
@@ -19,6 +20,17 @@ TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "assets", "plantilla_est
 
 MCL_UF = 5000
 MCL_USD = 200000
+
+# La columna "Indicación Probabilidad" del Pipeline usa estas 4 categorías.
+INDICACION_A_PROB = {
+    "cierta": 100,
+    "altamente probable": 75,
+    "podría ser": 50,
+    "podria ser": 50,
+    "nula": 0,
+}
+
+_TIMESTAMP_PREFIJO_RE = re.compile(r"^\s*\[\d{1,2}/\d{1,2}/\d{2,4}[^\]]*\]\s*")
 
 MESES_ES = {
     1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio",
@@ -63,16 +75,22 @@ def fmt_fecha_larga(fecha):
     return f"{fecha.day} de {MESES_ES[fecha.month]} de {fecha.year}"
 
 
-def filtrar_cartera(df_master, corredoras=None, aseguradoras=None, asegurados=None):
-    """Filtra los casos abiertos por Corredora / Compañía de seguros / Asegurado.
+def cargar_pipeline(archivo, sheet_name=None):
+    """Lee el Excel de Pipeline (una fila por caso activo, con Probabilidad de
+    cierre y Observaciones ya cargadas por el equipo)."""
+    xl = pd.ExcelFile(archivo)
+    hoja = sheet_name or xl.sheet_names[0]
+    return pd.read_excel(archivo, sheet_name=hoja)
+
+
+def filtrar_pipeline(df_pipeline, corredoras=None, aseguradoras=None, asegurados=None):
+    """Filtra el Pipeline por Corredora / Compañía de seguros / Asegurado.
 
     Cada parámetro es una lista opcional de valores exactos (tal como aparecen
     en el archivo). Si una lista viene vacía o None, ese filtro no se aplica.
     Cuando se combinan varios filtros, se aplican con AND (intersección).
     """
-    if "Es_Abierto" not in df_master.columns:
-        raise ValueError("df_master debe venir de procesar_datos_integrales()")
-    df = df_master[df_master["Es_Abierto"]].copy()
+    df = df_pipeline.copy()
     if corredoras and "Corredora" in df.columns:
         df = df[df["Corredora"].isin(corredoras)]
     if aseguradoras and "Compañía de seguros" in df.columns:
@@ -94,19 +112,26 @@ def sugerir_titulo_cartera(corredoras=None, aseguradoras=None, asegurados=None):
     return " · ".join(partes) if partes else "Cartera General"
 
 
-def preparar_tabla_casos(df_marsh_abiertos, fecha_corte):
-    """Construye la tabla base (una fila por caso) con los campos que requiere
-    el reporte. Los campos de juicio (Prob, Observación) quedan con valores
-    por defecto para que el usuario los revise/edite antes de generar el pptx.
+def _limpiar_observacion(texto):
+    return _TIMESTAMP_PREFIJO_RE.sub("", str(texto)).strip()
+
+
+def preparar_tabla_casos(df_pipeline_filtrado, fecha_corte):
+    """Construye la tabla base (una fila por caso) a partir del Pipeline.
+    Probabilidad de cierre y Observación ya vienen cargadas por el equipo
+    (columnas 'Indicación Probabilidad' / 'Probabilidad cierre 2026' y
+    'Observaciones'); el usuario solo las revisa/ajusta antes de generar el pptx.
     """
-    df = df_marsh_abiertos.copy()
+    df = df_pipeline_filtrado.copy()
 
     for col, default in [
         ("Divisa", "UF"),
         ("Perdida bruta (en moneda del caso)", 0),
         ("Asegurado", "Sin asegurado"),
         ("Nickname", ""),
-        ("Última observación", ""),
+        ("Observaciones", ""),
+        ("Contenido último movimiento", ""),
+        ("División", "Sin División"),
     ]:
         if col not in df.columns:
             df[col] = default
@@ -116,25 +141,35 @@ def preparar_tabla_casos(df_marsh_abiertos, fecha_corte):
     divisa = divisa.replace({"US$": "USD", "US $": "USD", "USD$": "USD", "U$": "USD"})
 
     perdida = pd.to_numeric(df["Perdida bruta (en moneda del caso)"], errors="coerce").fillna(0)
-    dias = (pd.Timestamp(fecha_corte) - df["Fecha_Ingreso"]).dt.days.clip(lower=0).fillna(0).astype(int)
+    fecha_ingreso = pd.to_datetime(df["Creado en"], errors="coerce")
+    dias = (pd.Timestamp(fecha_corte) - fecha_ingreso).dt.days.clip(lower=0).fillna(0).astype(int)
     mcl = ((divisa == "UF") & (perdida > MCL_UF)) | ((divisa == "USD") & (perdida > MCL_USD))
 
     nickname = df["Nickname"].astype(str).str.strip()
     asegurado = df["Asegurado"].astype(str).str.strip()
-    nickname_default = nickname.where(nickname.ne("") & nickname.ne("None"), asegurado)
+    nickname_default = nickname.where(nickname.ne("") & nickname.ne("None") & nickname.ne("nan"), asegurado)
+
+    indicacion = df.get("Indicación Probabilidad", pd.Series("", index=df.index)).astype(str).str.strip().str.lower()
+    prob_indicacion = indicacion.map(INDICACION_A_PROB)
+    prob_numerica = pd.to_numeric(df.get("Probabilidad cierre 2026", pd.Series(1.0, index=df.index)), errors="coerce") * 100
+    prob = prob_indicacion.fillna(prob_numerica).fillna(100).round().astype(int)
+
+    observacion = df["Observaciones"].astype(str).apply(_limpiar_observacion)
+    fallback = df["Contenido último movimiento"].astype(str).apply(_limpiar_observacion)
+    observacion_final = observacion.where(observacion.ne("") & observacion.ne("nan"), fallback)
 
     tabla = pd.DataFrame({
-        "Caso": df["ID_Caso"].astype(str),
+        "Caso": df["Número de caso"].astype(str),
         "Asegurado": asegurado,
         "Nickname": nickname_default,
         "Divisa": divisa,
         "Perdida_bruta": perdida,
         "Dias": dias,
-        "Division": df["Area_Negocio"].astype(str),
+        "Division": df["División"].astype(str),
         "MCL": mcl,
-        "Observacion_sugerida": df["Última observación"].fillna("").astype(str),
-        "Prob": 100,
-        "Observacion": "",
+        "Observacion_sugerida": observacion_final,
+        "Prob": prob,
+        "Observacion": observacion_final,
     })
     return tabla.sort_values("Dias", ascending=False).reset_index(drop=True)
 

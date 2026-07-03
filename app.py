@@ -316,98 +316,103 @@ st.subheader("📑 Reporte Ejecutivo de Cartera (PPTX)")
 st.markdown(
     "Genera la presentación 'Estado de Cartera' (mismo diseño de 7 slides) para cualquier corte: "
     "por Corredor, Aseguradora, Asegurado o una combinación de estos filtros. "
-    "Los KPIs, tablas y el gráfico se calculan automáticamente desde la cartera activa filtrada; "
-    "la probabilidad de cierre, observaciones y próximos pasos requieren tu revisión antes de generar."
+    "Usa el archivo **Pipeline** (no el Reporte de acciones): trae la probabilidad de cierre y las "
+    "observaciones de cada caso ya cargadas por el equipo, así que la mayoría de los datos se completan solos."
 )
 
-df_abiertos_master = df_master[df_master["Es_Abierto"]]
+archivo_pipeline = st.file_uploader("Cargar Pipeline (Excel)", type=["xlsx"], key="archivo_pipeline")
 
-col_f1, col_f2, col_f3 = st.columns(3)
-with col_f1:
-    opciones_corredora = sorted(df_abiertos_master["Corredora"].dropna().unique().tolist()) if "Corredora" in df_abiertos_master.columns else []
-    filtro_corredoras = st.multiselect("Corredor", opciones_corredora, key="filtro_corredoras")
-with col_f2:
-    opciones_aseguradora = sorted(df_abiertos_master["Compañía de seguros"].dropna().unique().tolist()) if "Compañía de seguros" in df_abiertos_master.columns else []
-    filtro_aseguradoras = st.multiselect("Aseguradora", opciones_aseguradora, key="filtro_aseguradoras")
-with col_f3:
-    opciones_asegurado = sorted(df_abiertos_master["Asegurado"].dropna().unique().tolist()) if "Asegurado" in df_abiertos_master.columns else []
-    filtro_asegurados = st.multiselect("Asegurado", opciones_asegurado, key="filtro_asegurados")
-
-if not (opciones_corredora or opciones_aseguradora or opciones_asegurado):
-    st.warning("El archivo cargado no tiene columnas 'Corredora' / 'Compañía de seguros' / 'Asegurado'; se usará toda la cartera activa sin filtrar.")
-
-df_cartera_filtrada = reporte_cartera.filtrar_cartera(
-    df_master, corredoras=filtro_corredoras, aseguradoras=filtro_aseguradoras, asegurados=filtro_asegurados
-)
-
-if df_cartera_filtrada.empty:
-    st.info("No hay casos activos que cumplan con los filtros seleccionados.")
+if archivo_pipeline is None:
+    st.info("Sube el archivo de Pipeline para generar el reporte.")
 else:
-    col_t1, col_t2 = st.columns([2, 1])
-    with col_t1:
-        titulo_sugerido = reporte_cartera.sugerir_titulo_cartera(filtro_corredoras, filtro_aseguradoras, filtro_asegurados)
-        # La key incluye los filtros activos para que el sugerido se refresque cada vez que cambian,
-        # sin perder una edición manual mientras el usuario no toque los filtros.
-        titulo_key = "titulo_cartera__" + "|".join(sorted(filtro_corredoras + filtro_aseguradoras + filtro_asegurados))
-        titulo_cartera = st.text_input("Título de la cartera (portada, resumen y pie de página)", value=titulo_sugerido, key=titulo_key)
-    with col_t2:
-        fecha_corte_reporte = st.date_input("Fecha de corte del reporte", value=datetime.now().date(), key="fecha_corte_reporte")
+    df_pipeline = reporte_cartera.cargar_pipeline(archivo_pipeline)
 
-    tabla_key = "cartera_tabla_editada"
-    tabla_base = reporte_cartera.preparar_tabla_casos(df_cartera_filtrada, fecha_corte_reporte)
+    col_f1, col_f2, col_f3 = st.columns(3)
+    with col_f1:
+        opciones_corredora = sorted(df_pipeline["Corredora"].dropna().unique().tolist()) if "Corredora" in df_pipeline.columns else []
+        filtro_corredoras = st.multiselect("Corredor", opciones_corredora, key="filtro_corredoras")
+    with col_f2:
+        opciones_aseguradora = sorted(df_pipeline["Compañía de seguros"].dropna().unique().tolist()) if "Compañía de seguros" in df_pipeline.columns else []
+        filtro_aseguradoras = st.multiselect("Aseguradora", opciones_aseguradora, key="filtro_aseguradoras")
+    with col_f3:
+        opciones_asegurado = sorted(df_pipeline["Asegurado"].dropna().unique().tolist()) if "Asegurado" in df_pipeline.columns else []
+        filtro_asegurados = st.multiselect("Asegurado", opciones_asegurado, key="filtro_asegurados")
 
-    st.markdown(f"**Cartera filtrada: {len(tabla_base)} casos activos.** "
-                "Ajusta 'Prob' (probabilidad de cierre %), 'Nickname' y 'Observacion' según tu criterio antes de generar el pptx.")
+    if not (opciones_corredora or opciones_aseguradora or opciones_asegurado):
+        st.warning("El archivo cargado no tiene columnas 'Corredora' / 'Compañía de seguros' / 'Asegurado'; se usará todo el Pipeline sin filtrar.")
 
-    tabla_editada = st.data_editor(
-        tabla_base[["Caso", "Asegurado", "Nickname", "Divisa", "Perdida_bruta", "Dias", "Division", "MCL", "Prob", "Observacion", "Observacion_sugerida"]],
-        column_config={
-            "Perdida_bruta": st.column_config.NumberColumn("Pérdida bruta", format="%.0f", disabled=True),
-            "Dias": st.column_config.NumberColumn("Días", disabled=True),
-            "Division": st.column_config.TextColumn("División", disabled=True),
-            "MCL": st.column_config.CheckboxColumn("MCL", disabled=True),
-            "Caso": st.column_config.TextColumn("Caso", disabled=True),
-            "Asegurado": st.column_config.TextColumn("Asegurado", disabled=True),
-            "Divisa": st.column_config.TextColumn("Divisa", disabled=True),
-            "Prob": st.column_config.NumberColumn("Prob. cierre (%)", min_value=0, max_value=100, step=25),
-            "Observacion_sugerida": st.column_config.TextColumn("Última observación (referencia)", disabled=True),
-        },
-        num_rows="fixed",
-        use_container_width=True,
-        key=tabla_key,
-        height=350,
+    df_cartera_filtrada = reporte_cartera.filtrar_pipeline(
+        df_pipeline, corredoras=filtro_corredoras, aseguradoras=filtro_aseguradoras, asegurados=filtro_asegurados
     )
 
-    st.markdown("#### Próximos pasos y focos de gestión (hasta 5)")
-    pasos = []
-    for i in range(5):
-        c1, c2 = st.columns([1, 2])
-        with c1:
-            titulo = st.text_input(f"Título paso {i + 1}", key=f"cartera_paso_titulo_{i}")
-        with c2:
-            desc = st.text_input(f"Descripción paso {i + 1}", key=f"cartera_paso_desc_{i}")
-        if titulo.strip() or desc.strip():
-            pasos.append({"titulo": titulo, "desc": desc})
+    if df_cartera_filtrada.empty:
+        st.info("No hay casos que cumplan con los filtros seleccionados.")
+    else:
+        col_t1, col_t2 = st.columns([2, 1])
+        with col_t1:
+            titulo_sugerido = reporte_cartera.sugerir_titulo_cartera(filtro_corredoras, filtro_aseguradoras, filtro_asegurados)
+            # La key incluye los filtros activos para que el sugerido se refresque cada vez que cambian,
+            # sin perder una edición manual mientras el usuario no toque los filtros.
+            titulo_key = "titulo_cartera__" + "|".join(sorted(filtro_corredoras + filtro_aseguradoras + filtro_asegurados))
+            titulo_cartera = st.text_input("Título de la cartera (portada, resumen y pie de página)", value=titulo_sugerido, key=titulo_key)
+        with col_t2:
+            fecha_corte_reporte = st.date_input("Fecha de corte del reporte", value=datetime.now().date(), key="fecha_corte_reporte")
 
-    alerta_prioritaria = st.text_area(
-        "Alerta de atención prioritaria (slide 'Casos que requieren atención especial')",
-        key="cartera_alerta",
-        placeholder="Ej: Atención prioritaria: Caso XXXXX (Nickname · Prob. 0%) acumula USD > X M sin antecedentes.",
-    )
+        tabla_key = "cartera_tabla_editada"
+        tabla_base = reporte_cartera.preparar_tabla_casos(df_cartera_filtrada, fecha_corte_reporte)
 
-    if st.button("🎯 Generar PPTX de Cartera", use_container_width=True):
-        pptx_bytes = reporte_cartera.generar_pptx(
-            fecha_corte_reporte,
-            titulo_cartera,
-            pd.DataFrame(tabla_editada),
-            pasos,
-            alerta_prioritaria,
-        )
-        nombre_archivo = "".join(c if c.isalnum() else "_" for c in titulo_cartera).strip("_") or "Cartera"
-        st.download_button(
-            label="⬇️ Descargar Estado_Cartera.pptx",
-            data=pptx_bytes,
-            file_name=f"Estado_Cartera_{nombre_archivo}_{fecha_corte_reporte.strftime('%d%m%y')}.pptx",
-            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        st.markdown(f"**Cartera filtrada: {len(tabla_base)} casos activos.** "
+                    "La probabilidad de cierre y la observación ya vienen del Pipeline; ajústalas si es necesario antes de generar el pptx.")
+
+        tabla_editada = st.data_editor(
+            tabla_base[["Caso", "Asegurado", "Nickname", "Divisa", "Perdida_bruta", "Dias", "Division", "MCL", "Prob", "Observacion", "Observacion_sugerida"]],
+            column_config={
+                "Perdida_bruta": st.column_config.NumberColumn("Pérdida bruta", format="%.0f", disabled=True),
+                "Dias": st.column_config.NumberColumn("Días", disabled=True),
+                "Division": st.column_config.TextColumn("División", disabled=True),
+                "MCL": st.column_config.CheckboxColumn("MCL", disabled=True),
+                "Caso": st.column_config.TextColumn("Caso", disabled=True),
+                "Asegurado": st.column_config.TextColumn("Asegurado", disabled=True),
+                "Divisa": st.column_config.TextColumn("Divisa", disabled=True),
+                "Prob": st.column_config.NumberColumn("Prob. cierre (%)", min_value=0, max_value=100, step=25),
+                "Observacion_sugerida": st.column_config.TextColumn("Observación original (referencia)", disabled=True),
+            },
+            num_rows="fixed",
             use_container_width=True,
+            key=tabla_key,
+            height=350,
         )
+
+        st.markdown("#### Próximos pasos y focos de gestión (hasta 5)")
+        pasos = []
+        for i in range(5):
+            c1, c2 = st.columns([1, 2])
+            with c1:
+                titulo = st.text_input(f"Título paso {i + 1}", key=f"cartera_paso_titulo_{i}")
+            with c2:
+                desc = st.text_input(f"Descripción paso {i + 1}", key=f"cartera_paso_desc_{i}")
+            if titulo.strip() or desc.strip():
+                pasos.append({"titulo": titulo, "desc": desc})
+
+        alerta_prioritaria = st.text_area(
+            "Alerta de atención prioritaria (slide 'Casos que requieren atención especial')",
+            key="cartera_alerta",
+            placeholder="Ej: Atención prioritaria: Caso XXXXX (Nickname · Prob. 0%) acumula USD > X M sin antecedentes.",
+        )
+
+        if st.button("🎯 Generar PPTX de Cartera", use_container_width=True):
+            pptx_bytes = reporte_cartera.generar_pptx(
+                fecha_corte_reporte,
+                titulo_cartera,
+                pd.DataFrame(tabla_editada),
+                pasos,
+                alerta_prioritaria,
+            )
+            nombre_archivo = "".join(c if c.isalnum() else "_" for c in titulo_cartera).strip("_") or "Cartera"
+            st.download_button(
+                label="⬇️ Descargar Estado_Cartera.pptx",
+                data=pptx_bytes,
+                file_name=f"Estado_Cartera_{nombre_archivo}_{fecha_corte_reporte.strftime('%d%m%y')}.pptx",
+                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                use_container_width=True,
+            )
