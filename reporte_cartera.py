@@ -1,9 +1,11 @@
 """
-Generador del Reporte Ejecutivo "Estado de Cartera" para Marsh S.A.
+Generador del Reporte Ejecutivo "Estado de Cartera".
 
-Reutiliza el diseño de assets/marsh_template.pptx (7 slides) y reemplaza
-únicamente los textos, tablas y el gráfico que contienen datos, preservando
-el formato original (fuentes, colores, posiciones) del template.
+Reutiliza el diseño de assets/plantilla_estado_cartera.pptx (7 slides) y
+reemplaza únicamente los textos, tablas y el gráfico que contienen datos,
+preservando el formato original (fuentes, colores, posiciones) del template.
+Sirve para cualquier corte de cartera: por Corredora, Compañía de seguros
+(Aseguradora), Asegurado, o una combinación de estos filtros.
 """
 import io
 import os
@@ -13,7 +15,7 @@ import pandas as pd
 from pptx import Presentation
 from pptx.chart.data import CategoryChartData
 
-TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "assets", "marsh_template.pptx")
+TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "assets", "plantilla_estado_cartera.pptx")
 
 MCL_UF = 5000
 MCL_USD = 200000
@@ -23,9 +25,9 @@ MESES_ES = {
     7: "julio", 8: "agosto", 9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre",
 }
 
-# --- Mapa de shape_id por slide (0-indexado) construido a partir de assets/marsh_template.pptx ---
-SLIDE1 = dict(fecha_corte=10, casos_activos=12, perdida_uf=15, perdida_usd=18)
-SLIDE2 = dict(cartera_activa=11, division_split=17, divisa_split=23,
+# --- Mapa de shape_id por slide (0-indexado) construido a partir de assets/plantilla_estado_cartera.pptx ---
+SLIDE1 = dict(titulo_cartera=6, fecha_corte=10, casos_activos=12, perdida_uf=15, perdida_usd=18)
+SLIDE2 = dict(titulo_cartera=6, cartera_activa=11, division_split=17, divisa_split=23,
               exposicion_uf=29, exposicion_usd=35, mcl_pct=41, mcl_casos=43)
 SLIDE3 = dict(mcl_count=11, mcl_pct_line=12, mcl_sum_line=13,
               otros_count=17, otros_pct_line=18, otros_sum_line=19,
@@ -61,14 +63,35 @@ def fmt_fecha_larga(fecha):
     return f"{fecha.day} de {MESES_ES[fecha.month]} de {fecha.year}"
 
 
-def filtrar_cartera_marsh(df_master, corredora_col="Corredora"):
-    """Filtra los casos abiertos cuya Corredora contiene 'Marsh'."""
+def filtrar_cartera(df_master, corredoras=None, aseguradoras=None, asegurados=None):
+    """Filtra los casos abiertos por Corredora / Compañía de seguros / Asegurado.
+
+    Cada parámetro es una lista opcional de valores exactos (tal como aparecen
+    en el archivo). Si una lista viene vacía o None, ese filtro no se aplica.
+    Cuando se combinan varios filtros, se aplican con AND (intersección).
+    """
     if "Es_Abierto" not in df_master.columns:
         raise ValueError("df_master debe venir de procesar_datos_integrales()")
     df = df_master[df_master["Es_Abierto"]].copy()
-    if corredora_col in df.columns:
-        df = df[df[corredora_col].astype(str).str.contains("marsh", case=False, na=False)]
+    if corredoras and "Corredora" in df.columns:
+        df = df[df["Corredora"].isin(corredoras)]
+    if aseguradoras and "Compañía de seguros" in df.columns:
+        df = df[df["Compañía de seguros"].isin(aseguradoras)]
+    if asegurados and "Asegurado" in df.columns:
+        df = df[df["Asegurado"].isin(asegurados)]
     return df
+
+
+def sugerir_titulo_cartera(corredoras=None, aseguradoras=None, asegurados=None):
+    """Sugiere un título de portada a partir de los filtros activos (editable por el usuario)."""
+    if asegurados:
+        return " · ".join(asegurados)
+    partes = []
+    if corredoras:
+        partes.append(" · ".join(corredoras))
+    if aseguradoras:
+        partes.append(" · ".join(aseguradoras))
+    return " · ".join(partes) if partes else "Cartera General"
 
 
 def preparar_tabla_casos(df_marsh_abiertos, fecha_corte):
@@ -209,9 +232,11 @@ def _fill_table_rows(tabla_pptx, filas):
             _set_text(tabla_pptx.cell(i + 1, c).text_frame, str(valor))
 
 
-def generar_pptx(fecha_corte, tabla, pasos, alerta_prioritaria):
+def generar_pptx(fecha_corte, titulo_cartera, tabla, pasos, alerta_prioritaria):
     """
     fecha_corte: datetime.date/datetime
+    titulo_cartera: texto para la portada/resumen/pie (ej. 'MARSH S.A.', 'Essbio S.A.',
+                    'Aon Risk Services · Essbio S.A.', 'Cartera General', etc.)
     tabla: DataFrame de preparar_tabla_casos() ya editado por el usuario
            (columnas Caso, Nickname, Divisa, Perdida_bruta, Dias, Division, MCL, Prob, Observacion)
     pasos: lista de hasta 5 dicts {'titulo':..., 'desc':...}
@@ -222,6 +247,7 @@ def generar_pptx(fecha_corte, tabla, pasos, alerta_prioritaria):
 
     # --- Slide 1: Portada ---
     s1 = prs.slides[0]
+    _set_shape_text(s1, SLIDE1["titulo_cartera"], titulo_cartera)
     _set_shape_text(s1, SLIDE1["fecha_corte"], fmt_fecha_larga(fecha_corte))
     _set_shape_text(s1, SLIDE1["casos_activos"], str(kpis["total"]))
     _set_shape_text(s1, SLIDE1["perdida_uf"], fmt_uf(kpis["uf_total"]))
@@ -229,6 +255,7 @@ def generar_pptx(fecha_corte, tabla, pasos, alerta_prioritaria):
 
     # --- Slide 2: Resumen general ---
     s2 = prs.slides[1]
+    _set_shape_text(s2, SLIDE2["titulo_cartera"], titulo_cartera)
     _set_shape_text(s2, SLIDE2["cartera_activa"], str(kpis["total"]))
     _set_shape_text(s2, SLIDE2["division_split"], f"{kpis['div_ing']} / {kpis['div_otros']}")
     _set_shape_text(s2, SLIDE2["divisa_split"], f"{kpis['uf_count']} UF · {kpis['usd_count']} USD")
@@ -311,7 +338,7 @@ def generar_pptx(fecha_corte, tabla, pasos, alerta_prioritaria):
         _set_shape_text(s7, ids["desc"], paso.get("desc", ""))
     _set_shape_text(
         s7, SLIDE7["footer"],
-        f"JPV Asociados · Ajustadores Especializados  ·  Análisis al {fmt_fecha_larga(fecha_corte)}  ·  Cartera MARSH S.A.",
+        f"JPV Asociados · Ajustadores Especializados  ·  Análisis al {fmt_fecha_larga(fecha_corte)}  ·  Cartera {titulo_cartera}",
     )
 
     output = io.BytesIO()
