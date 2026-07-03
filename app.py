@@ -346,7 +346,10 @@ else:
     col_t1, col_t2 = st.columns([2, 1])
     with col_t1:
         titulo_sugerido = reporte_cartera.sugerir_titulo_cartera(filtro_corredoras, filtro_aseguradoras, filtro_asegurados)
-        titulo_cartera = st.text_input("Título de la cartera (portada, resumen y pie de página)", value=titulo_sugerido, key="titulo_cartera")
+        # La key incluye los filtros activos para que el sugerido se refresque cada vez que cambian,
+        # sin perder una edición manual mientras el usuario no toque los filtros.
+        titulo_key = "titulo_cartera__" + "|".join(sorted(filtro_corredoras + filtro_aseguradoras + filtro_asegurados))
+        titulo_cartera = st.text_input("Título de la cartera (portada, resumen y pie de página)", value=titulo_sugerido, key=titulo_key)
     with col_t2:
         fecha_corte_reporte = st.date_input("Fecha de corte del reporte", value=datetime.now().date(), key="fecha_corte_reporte")
 
