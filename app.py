@@ -183,12 +183,6 @@ tab_reporte, tab_energia, tab_moviles, tab_tendencias = st.tabs([
 
 with tab_reporte:
     st.subheader("📑 Reporte Ejecutivo de Cartera (PPTX)")
-    st.markdown(
-        "Genera la presentación 'Estado de Cartera' (mismo diseño de 7 slides) para cualquier corte: "
-        "por Corredor, Aseguradora, Asegurado o una combinación de estos filtros. "
-        "Usa el archivo **Pipeline** (no el Reporte de acciones): trae la probabilidad de cierre y las "
-        "observaciones de cada caso ya cargadas por el equipo, así que la mayoría de los datos se completan solos."
-    )
 
     archivo_pipeline = st.file_uploader("Cargar Pipeline (Excel)", type=["xlsx"], key="archivo_pipeline")
 
@@ -196,6 +190,30 @@ with tab_reporte:
         st.info("Sube el archivo de Pipeline para generar el reporte.")
     else:
         df_pipeline = reporte_cartera.cargar_pipeline(archivo_pipeline)
+
+        st.markdown("#### Panorama general del Pipeline (Top 5)")
+        col_g1, col_g2, col_g3 = st.columns(3)
+        top5_specs = [
+            (col_g1, "Compañía de seguros", "Top 5 Aseguradoras", "#3498db"),
+            (col_g2, "Corredora", "Top 5 Corredoras", "#e67e22"),
+            (col_g3, "Asegurado", "Top 5 Asegurados", "#27ae60"),
+        ]
+        for columna, campo, titulo_grafico, color in top5_specs:
+            with columna:
+                st.markdown(f"**{titulo_grafico}**")
+                if campo in df_pipeline.columns:
+                    top5 = df_pipeline[campo].dropna().value_counts().head(5).reset_index()
+                    top5.columns = [campo, "Casos"]
+                    fig_top5 = px.bar(
+                        top5.sort_values("Casos"), x="Casos", y=campo, orientation="h",
+                        text="Casos", color_discrete_sequence=[color],
+                    )
+                    fig_top5.update_layout(yaxis_title=None, height=280, margin=dict(l=0, r=10, t=10, b=10))
+                    st.plotly_chart(fig_top5, use_container_width=True)
+                else:
+                    st.info(f"El Pipeline no tiene la columna '{campo}'.")
+
+        st.divider()
 
         col_f1, col_f2, col_f3 = st.columns(3)
         with col_f1:
