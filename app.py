@@ -132,7 +132,8 @@ def procesar_datos_integrales(df):
     df = df[~df['Subestado_Actual'].str.contains('RECHAZADO|RECHAZO', case=False, na=False)]
     
     # 2. DETECCIÓN Y FILTRO DE TIEMPOS DE RESIDENCIA (Columnas "Días")
-    cols_dias = [col for col in df.columns if 'Días' in col or 'Dias' in col]
+    # Si el encabezado quedó desfasado, alguna columna puede llegar como fecha/número en vez de texto.
+    cols_dias = [col for col in df.columns if isinstance(col, str) and ('Días' in col or 'Dias' in col)]
     for c in cols_dias:
         df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
         # FILTRO: Eliminar errores lógicos (outliers de > 1500 días)
