@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from docx import Document
 from docx.shared import Inches
 import matplotlib.pyplot as plt
+import marsh_report
 
 # --- SECCIÓN 1: CONFIGURACIÓN Y MOTOR DE CARGA ---
 st.set_page_config(page_title="Dashboard de Gestión: Procesos y Tendencias", layout="wide", page_icon="⚙️")
@@ -308,3 +309,75 @@ with col_d2:
                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
     else:
         st.info("No hay información suficiente para generar el reporte Word.")
+
+# --- SECCIÓN 5: REPORTE EJECUTIVO MARSH (PPTX) ---
+st.divider()
+st.subheader("📑 Reporte Ejecutivo Marsh (PPTX)")
+st.markdown(
+    "Genera la presentación 'Estado de Cartera' para Marsh S.A. (mismo diseño de 7 slides). "
+    "Los KPIs, tablas y el gráfico se calculan automáticamente desde la cartera activa; "
+    "la probabilidad de cierre, observaciones y próximos pasos requieren tu revisión antes de generar."
+)
+
+df_cartera_marsh = marsh_report.filtrar_cartera_marsh(df_master)
+
+if df_cartera_marsh.empty:
+    st.info("No se detectaron casos abiertos de la corredora Marsh en el archivo cargado.")
+else:
+    fecha_corte_marsh = st.date_input("Fecha de corte del reporte", value=datetime.now().date())
+    tabla_key = "marsh_tabla_editada"
+    tabla_base = marsh_report.preparar_tabla_casos(df_cartera_marsh, fecha_corte_marsh)
+
+    st.markdown(f"**Cartera Marsh detectada: {len(tabla_base)} casos activos.** "
+                "Ajusta 'Prob' (probabilidad de cierre %), 'Nickname' y 'Observacion' según tu criterio antes de generar el pptx.")
+
+    tabla_editada = st.data_editor(
+        tabla_base[["Caso", "Asegurado", "Nickname", "Divisa", "Perdida_bruta", "Dias", "Division", "MCL", "Prob", "Observacion", "Observacion_sugerida"]],
+        column_config={
+            "Perdida_bruta": st.column_config.NumberColumn("Pérdida bruta", format="%.0f", disabled=True),
+            "Dias": st.column_config.NumberColumn("Días", disabled=True),
+            "Division": st.column_config.TextColumn("División", disabled=True),
+            "MCL": st.column_config.CheckboxColumn("MCL", disabled=True),
+            "Caso": st.column_config.TextColumn("Caso", disabled=True),
+            "Asegurado": st.column_config.TextColumn("Asegurado", disabled=True),
+            "Divisa": st.column_config.TextColumn("Divisa", disabled=True),
+            "Prob": st.column_config.NumberColumn("Prob. cierre (%)", min_value=0, max_value=100, step=25),
+            "Observacion_sugerida": st.column_config.TextColumn("Última observación (referencia)", disabled=True),
+        },
+        num_rows="fixed",
+        use_container_width=True,
+        key=tabla_key,
+        height=350,
+    )
+
+    st.markdown("#### Próximos pasos y focos de gestión (hasta 5)")
+    pasos = []
+    for i in range(5):
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            titulo = st.text_input(f"Título paso {i + 1}", key=f"marsh_paso_titulo_{i}")
+        with c2:
+            desc = st.text_input(f"Descripción paso {i + 1}", key=f"marsh_paso_desc_{i}")
+        if titulo.strip() or desc.strip():
+            pasos.append({"titulo": titulo, "desc": desc})
+
+    alerta_prioritaria = st.text_area(
+        "Alerta de atención prioritaria (slide 'Casos que requieren atención especial')",
+        key="marsh_alerta",
+        placeholder="Ej: Atención prioritaria: Caso XXXXX (Nickname · Prob. 0%) acumula USD > X M sin antecedentes.",
+    )
+
+    if st.button("🎯 Generar PPTX Marsh", use_container_width=True):
+        pptx_bytes = marsh_report.generar_pptx(
+            fecha_corte_marsh,
+            pd.DataFrame(tabla_editada),
+            pasos,
+            alerta_prioritaria,
+        )
+        st.download_button(
+            label="⬇️ Descargar Marsh_Estado_Cartera.pptx",
+            data=pptx_bytes,
+            file_name=f"Marsh_Estado_Cartera_{fecha_corte_marsh.strftime('%d%m%y')}.pptx",
+            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            use_container_width=True,
+        )
