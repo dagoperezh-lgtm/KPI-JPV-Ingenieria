@@ -190,8 +190,7 @@ def construir_grilla_con_totales(df_maestro, df_plan_semana, dias_semana, metas_
     notas = notas_por_ajustador(df_plan_semana)
     grilla["Gestion_Comercial"] = ""
     grilla["Extra"] = ""
-    orden_tramo = {"<= 1000 UF": 0, "> 1000 Y <= 5000 UF": 1, "> 5000 UF (MCL)": 2,
-                   "<= 200.000 USD": 0, "> 200.000 USD (MCL)": 1, "N/D": 9}
+    orden_tramo = {"<= 1000 UF": 0, "> 1000 Y <= 5000 UF": 1, "> 5000 UF (MCL)": 2, "N/D": 9}
     grilla["_orden"] = grilla["Tramo"].map(orden_tramo).fillna(5)
     grilla = grilla.sort_values(["Division", "Ajustador", "_orden"]).drop(columns="_orden").reset_index(drop=True)
 

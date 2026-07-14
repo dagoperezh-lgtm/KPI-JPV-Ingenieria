@@ -177,25 +177,26 @@ def parsear_fecha_flexible(valor):
     return pd.to_datetime(s, dayfirst=True, errors="coerce")
 
 
+# Sin segmentación aparte para USD: se convierte a UF con la misma proporción
+# que ya usa reporte_cartera.py entre sus umbrales MCL (MCL_UF=5000 / MCL_USD=200.000).
+UF_POR_USD = 200000 / 5000
+
+
 def calcular_tramo(fila, col_perdida="Perdida bruta (en moneda del caso)", col_divisa="Divisa"):
     divisa = str(fila.get(col_divisa, "")).upper()
     valor = limpiar_monto(fila.get(col_perdida, 0)) if col_perdida in fila else 0.0
 
-    is_mcl = False
     if "USD" in divisa or "US$" in divisa or "DÓLAR" in divisa or "DOLAR" in divisa:
-        if valor > 200000:
-            is_mcl = True
-            tramo_str = "> 200.000 USD (MCL)"
-        else:
-            tramo_str = "<= 200.000 USD"
+        valor = valor / UF_POR_USD
+
+    is_mcl = False
+    if valor <= 1000:
+        tramo_str = "<= 1000 UF"
+    elif valor <= 5000:
+        tramo_str = "> 1000 Y <= 5000 UF"
     else:
-        if valor <= 1000:
-            tramo_str = "<= 1000 UF"
-        elif valor <= 5000:
-            tramo_str = "> 1000 Y <= 5000 UF"
-        else:
-            is_mcl = True
-            tramo_str = "> 5000 UF (MCL)"
+        is_mcl = True
+        tramo_str = "> 5000 UF (MCL)"
     return tramo_str, is_mcl
 
 

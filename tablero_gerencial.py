@@ -279,7 +279,7 @@ with tab_metas:
         df_metas_sem, num_rows="dynamic", use_container_width=True, key="editor_metas_semanales",
         column_config={
             "ajustador": st.column_config.TextColumn("Ajustador"),
-            "tramo": st.column_config.SelectboxColumn("Tramo", options=["<= 1000 UF", "> 1000 Y <= 5000 UF", "> 5000 UF (MCL)", "<= 200.000 USD", "> 200.000 USD (MCL)"]),
+            "tramo": st.column_config.SelectboxColumn("Tramo", options=["<= 1000 UF", "> 1000 Y <= 5000 UF", "> 5000 UF (MCL)"]),
             "tipo": st.column_config.SelectboxColumn("Tipo", options=["Ajuste", "IFL"]),
             "valor": st.column_config.NumberColumn("Meta (Q)", min_value=0, step=1),
         },
