@@ -167,47 +167,50 @@ def notas_por_ajustador(df_plan_semana):
 
 
 def construir_grilla_con_totales(df_maestro, df_plan_semana, dias_semana, metas_config=None):
-    """Igual que construir_grilla(), pero además arma la fila TOTAL por
-    ajustador (agregando todos sus tramos) que en el Excel lleva las notas de
-    Gestión Comercial / Extra, tal como aparece en TABLERO_ING: una fila con
-    el nombre del ajustador solo (Tramo='TOTAL') seguida de sus filas por tramo."""
+    """Igual que construir_grilla(), pero en el formato del Excel: una fila
+    por Ajustador+Tramo (el nombre va PEGADO a su tramo, no en una fila
+    aparte por encima de la segmentación). Las notas de Gestión Comercial /
+    Extra de la semana se muestran en la PRIMERA fila de cada ajustador.
+    Se descartan las filas sin ningún dato (tramo 'N/D' completamente vacío)."""
     grilla = construir_grilla(df_maestro, df_plan_semana, dias_semana, metas_config)
     if grilla.empty:
         return grilla
 
+    grilla = grilla.copy()
+    # Días prom nunca puede ser negativo (un caso no puede "crearse en el futuro");
+    # si sale negativo es una fecha mal registrada en el sistema, se descarta el valor.
+    grilla.loc[grilla["Dias_prom"] < 0, "Dias_prom"] = None
+
+    cols_actividad = ["Stock_Q", "Ajuste_Qp", "Ajuste_Qr", "IFL_Qp", "IFL_Qr"]
+    fila_vacia = (grilla["Tramo"] == "N/D") & (grilla[cols_actividad].fillna(0).sum(axis=1) == 0)
+    grilla = grilla[~fila_vacia].reset_index(drop=True)
+    if grilla.empty:
+        return grilla
+
     notas = notas_por_ajustador(df_plan_semana)
-    suma_cols = [c for c in COLUMNAS_NUMERICAS if c not in ("Ajuste_Meta", "IFL_Meta")]
-
-    filas_totales = []
-    for (division, ajustador), sub in grilla.groupby(["Division", "Ajustador"], sort=False):
-        fila = {"Division": division, "Ajustador": ajustador, "Tramo": "TOTAL"}
-        for c in suma_cols:
-            fila[c] = sub[c].sum()
-        dias_validos = sub["Dias_prom"].dropna()
-        fila["Dias_prom"] = round(dias_validos.mean(), 0) if not dias_validos.empty else None
-        fila["Ajuste_Meta"] = sub["Ajuste_Meta"].dropna().sum() if sub["Ajuste_Meta"].notna().any() else None
-        fila["IFL_Meta"] = sub["IFL_Meta"].dropna().sum() if sub["IFL_Meta"].notna().any() else None
-        fila["Gestion_Comercial"] = notas.get(ajustador, {}).get("comercial", "")
-        fila["Extra"] = notas.get(ajustador, {}).get("extra", "")
-        filas_totales.append(fila)
-
-    df_totales = pd.DataFrame(filas_totales)
     grilla["Gestion_Comercial"] = ""
     grilla["Extra"] = ""
-    combinado = pd.concat([df_totales, grilla], ignore_index=True)
-    combinado["_orden_tramo"] = (combinado["Tramo"] != "TOTAL").astype(int)
-    return combinado.sort_values(["Division", "Ajustador", "_orden_tramo"]).drop(columns="_orden_tramo").reset_index(drop=True)
+    orden_tramo = {"<= 1000 UF": 0, "> 1000 Y <= 5000 UF": 1, "> 5000 UF (MCL)": 2,
+                   "<= 200.000 USD": 0, "> 200.000 USD (MCL)": 1, "N/D": 9}
+    grilla["_orden"] = grilla["Tramo"].map(orden_tramo).fillna(5)
+    grilla = grilla.sort_values(["Division", "Ajustador", "_orden"]).drop(columns="_orden").reset_index(drop=True)
+
+    primera_fila_idx = grilla.groupby(["Division", "Ajustador"], sort=False).head(1).index
+    for idx in primera_fila_idx:
+        ajustador = grilla.loc[idx, "Ajustador"]
+        grilla.loc[idx, "Gestion_Comercial"] = notas.get(ajustador, {}).get("comercial", "")
+        grilla.loc[idx, "Extra"] = notas.get(ajustador, {}).get("extra", "")
+
+    return grilla
 
 
 def subtotales_por_division(grilla_con_totales):
-    """Subtotal_Ingeniería / Subtotal_Equipo_Móvil / Total — sumando SOLO las
-    filas de tramo (no las filas TOTAL por ajustador, para no duplicar)."""
+    """Subtotal_Ingeniería / Subtotal_Equipo_Móvil / Total General."""
     if grilla_con_totales.empty:
         return pd.DataFrame(columns=["Division"] + COLUMNAS_NUMERICAS)
-    solo_tramos = grilla_con_totales[grilla_con_totales["Tramo"] != "TOTAL"]
     suma_cols = [c for c in COLUMNAS_NUMERICAS if c not in ("Ajuste_Meta", "IFL_Meta")]
-    subtotal = solo_tramos.groupby("Division")[suma_cols].sum().reset_index()
-    total = pd.DataFrame([{"Division": "TOTAL GENERAL", **{c: solo_tramos[c].sum() for c in suma_cols}}])
+    subtotal = grilla_con_totales.groupby("Division")[suma_cols].sum().reset_index()
+    total = pd.DataFrame([{"Division": "TOTAL GENERAL", **{c: grilla_con_totales[c].sum() for c in suma_cols}}])
     return pd.concat([subtotal, total], ignore_index=True)
 
 

@@ -140,8 +140,9 @@ tab_grilla, tab_avance, tab_top5, tab_comercial, tab_metas = st.tabs([
 
 # ---------------------------------------------------------
 # TAB 1: GRILLA SEMANAL (Stock / Ajuste / IFL) — Semana Anterior vs Actual
-# Misma estructura que el Excel: fila TOTAL por ajustador + filas por tramo,
-# subtotal por división y total general.
+# Misma estructura que el Excel: una fila por Ajustador+Tramo (nombre y
+# tramo juntos en la misma fila, sin fila resumen por encima), subtotal
+# por división y total general.
 # ---------------------------------------------------------
 def _formatear_para_pantalla(grilla):
     if grilla.empty:
@@ -153,7 +154,7 @@ def _formatear_para_pantalla(grilla):
         df[c] = df[c].fillna(0).astype(int)
     df["Ajuste_Meta"] = df["Ajuste_Meta"].apply(lambda v: "-" if pd.isna(v) else int(v))
     df["IFL_Meta"] = df["IFL_Meta"].apply(lambda v: "-" if pd.isna(v) else int(v))
-    df["Ajustador"] = df.apply(lambda r: r["Ajustador"] if r["Tramo"] == "TOTAL" else f"↳ {r['Tramo']}", axis=1)
+    df["Ajustador"] = df["Ajustador"] + " — " + df["Tramo"]
     return df.drop(columns=["Tramo"]).rename(columns={
         "Division": "División", "Ajustador": "Ajustador / Tramo",
         "Asignados": "Asignados", "Stock_Q": "Q", "Dias_prom": "Días prom", "Stock_Hon_UF": "Hon UF",

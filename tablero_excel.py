@@ -104,20 +104,23 @@ def _escribir_grilla_semana(ws, fila, titulo, grilla_con_totales, subtotales):
         return fila + 2
 
     fila_inicio_division = {}
+    ajustador_previo = None
     for _, fila_datos in grilla_con_totales.iterrows():
-        es_total_ajustador = fila_datos["Tramo"] == "TOTAL"
         division = fila_datos["Division"]
+        ajustador = fila_datos["Ajustador"]
+        es_primera_fila_ajustador = ajustador != ajustador_previo
+        ajustador_previo = ajustador
         if division not in fila_inicio_division:
             fila_inicio_division[division] = fila
 
         for idx, (clave, _, _) in enumerate(COLUMNAS_GRILLA):
             col_idx = idx + 1
             if clave == "Division":
-                valor = division if es_total_ajustador else None
+                valor = division if es_primera_fila_ajustador else None
             elif clave == "Ajustador":
-                valor = fila_datos["Ajustador"] if es_total_ajustador else f"  {fila_datos['Tramo']}"
-            elif clave in ("Gestion_Comercial", "Extra") and not es_total_ajustador:
-                valor = None
+                # Nombre + tramo pegados en la misma fila (igual que el Excel original),
+                # nunca el nombre solo en una fila aparte por encima del detalle.
+                valor = f"{ajustador} {fila_datos['Tramo']}"
             elif clave in ("Ajuste_Meta", "IFL_Meta"):
                 v = fila_datos.get(clave)
                 valor = None if v in (None, "") or (isinstance(v, float) and v != v) else v
@@ -126,10 +129,7 @@ def _escribir_grilla_semana(ws, fila, titulo, grilla_con_totales, subtotales):
 
             num_format = "0.00" if "Hon" in clave else ("0" if clave not in ("Division", "Ajustador", "Gestion_Comercial", "Extra") else None)
             align = Alignment(horizontal="left", vertical="center", wrap_text=True) if clave in ("Ajustador", "Gestion_Comercial", "Extra") else None
-            _c(ws, fila, col_idx, valor,
-               font=FONT_TOTAL_AJ if es_total_ajustador else FONT_NORMAL,
-               fill=FILL_TOTAL_AJ if es_total_ajustador else None,
-               align=align, num_format=num_format)
+            _c(ws, fila, col_idx, valor, font=FONT_NORMAL, align=align, num_format=num_format)
         fila += 1
 
     for division, fila_ini in fila_inicio_division.items():
