@@ -11,7 +11,6 @@ Lo único que se ingresa manualmente aquí son las Metas (cuota semanal de
 entregables y meta anual/mensual de producción), porque esos números no
 existen en ningún caso del sistema.
 """
-import io
 from datetime import datetime
 
 import numpy as np
@@ -20,6 +19,7 @@ import streamlit as st
 
 import tablero_calculo as calc
 import tablero_datos as datos
+import tablero_excel
 import tablero_metas as metas_mod
 
 st.set_page_config(page_title="Tablero Gerencial — Ingeniería y Equipo Móvil", layout="wide", page_icon="🛠️")
@@ -54,7 +54,7 @@ def _generar_demo():
             "Asegurado": f"Asegurado {i}",
             "Estado": np.random.choice(["Ajuste", "IFL", "Cerrado"], p=[0.5, 0.3, 0.2]),
             "Sub estado": "En Proceso",
-            "Creado en": (hoy - pd.Timedelta(days=int(np.random.randint(1, 400)))).strftime("%Y-%m-%d"),
+            "Creado en": (hoy - pd.Timedelta(days=int(np.random.randint(1, 400)))).strftime("%d/%m/%Y"),
             "Divisa": "UF",
             "Perdida bruta (en moneda del caso)": int(np.random.choice([500, 2500, 8000])),
         }
@@ -140,55 +140,64 @@ tab_grilla, tab_avance, tab_top5, tab_comercial, tab_metas = st.tabs([
 
 # ---------------------------------------------------------
 # TAB 1: GRILLA SEMANAL (Stock / Ajuste / IFL) — Semana Anterior vs Actual
+# Misma estructura que el Excel: fila TOTAL por ajustador + filas por tramo,
+# subtotal por división y total general.
 # ---------------------------------------------------------
-def _formatear_grilla(grilla):
+def _formatear_para_pantalla(grilla):
     if grilla.empty:
         return grilla
     df = grilla.copy()
     for c in ["Stock_Hon_UF", "Ajuste_HonpUF", "Ajuste_HonrUF", "IFL_HonpUF", "IFL_HonrUF"]:
         df[c] = df[c].round(2)
     for c in ["Asignados", "Stock_Q", "Ajuste_Qp", "Ajuste_Qr", "IFL_Qp", "IFL_Qr"]:
-        df[c] = df[c].astype(int)
+        df[c] = df[c].fillna(0).astype(int)
     df["Ajuste_Meta"] = df["Ajuste_Meta"].apply(lambda v: "-" if pd.isna(v) else int(v))
     df["IFL_Meta"] = df["IFL_Meta"].apply(lambda v: "-" if pd.isna(v) else int(v))
-    return df.rename(columns={
-        "Division": "División", "Ajustador": "Ajustador", "Tramo": "Tramo",
+    df["Ajustador"] = df.apply(lambda r: r["Ajustador"] if r["Tramo"] == "TOTAL" else f"↳ {r['Tramo']}", axis=1)
+    return df.drop(columns=["Tramo"]).rename(columns={
+        "Division": "División", "Ajustador": "Ajustador / Tramo",
         "Asignados": "Asignados", "Stock_Q": "Q", "Dias_prom": "Días prom", "Stock_Hon_UF": "Hon UF",
         "Ajuste_Qp": "Ajuste: Q p", "Ajuste_Meta": "Ajuste: Meta", "Ajuste_HonpUF": "Ajuste: Hon p UF",
         "Ajuste_Qr": "Ajuste: Q r", "Ajuste_HonrUF": "Ajuste: Hon r UF",
         "IFL_Qp": "IFL: Q p", "IFL_Meta": "IFL: Meta", "IFL_HonpUF": "IFL: Hon p UF",
         "IFL_Qr": "IFL: Q r", "IFL_HonrUF": "IFL: Hon r UF",
+        "Gestion_Comercial": "Comercial", "Extra": "Extra",
     })
 
 
+grilla_previa_full = calc.construir_grilla_con_totales(df_maestro, df_plan_previa, dias_previa, metas_semanales_dict)
+grilla_actual_full = calc.construir_grilla_con_totales(df_maestro, df_plan_actual, dias_actual, metas_semanales_dict)
+subtotales_previa = calc.subtotales_por_division(grilla_previa_full)
+subtotales_actual = calc.subtotales_por_division(grilla_actual_full)
+
 with tab_grilla:
-    for etiqueta, dias, df_plan in [
-        ("Semana Anterior", dias_previa, df_plan_previa),
-        (f"Semana Actual ({datos.rango_semana_legible(offset_semana, hoy)})", dias_actual, df_plan_actual),
+    for etiqueta, grilla_full in [
+        ("Semana Anterior", grilla_previa_full),
+        (f"Semana Actual ({datos.rango_semana_legible(offset_semana, hoy)})", grilla_actual_full),
     ]:
         st.subheader(etiqueta)
-        grilla = calc.construir_grilla(df_maestro, df_plan, dias, metas_semanales_dict)
-        if grilla.empty:
+        if grilla_full.empty:
             st.info("Sin casos ni planes registrados para este período.")
             continue
-        for division in sorted(grilla["Division"].unique()):
+        for division in sorted(grilla_full["Division"].unique()):
             with st.expander(f"**{division}**", expanded=True):
-                sub = _formatear_grilla(grilla[grilla["Division"] == division].drop(columns=["Division"]))
+                sub = _formatear_para_pantalla(grilla_full[grilla_full["Division"] == division].drop(columns=["Division"]))
                 st.dataframe(sub, use_container_width=True, hide_index=True)
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Stock total (Q)", int(sub["Q"].sum()))
-                c2.metric("Ajuste realizado (Hon UF)", f"{sub['Ajuste: Hon r UF'].sum():,.2f}")
-                c3.metric("IFL realizado (Hon UF)", f"{sub['IFL: Hon r UF'].sum():,.2f}")
         st.markdown("---")
 
-    grilla_export = calc.construir_grilla(df_maestro, df_plan_actual, dias_actual, metas_semanales_dict)
-    if not grilla_export.empty:
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            _formatear_grilla(calc.construir_grilla(df_maestro, df_plan_previa, dias_previa, metas_semanales_dict)).to_excel(writer, index=False, sheet_name="Semana Anterior")
-            _formatear_grilla(grilla_export).to_excel(writer, index=False, sheet_name="Semana Actual")
+    if not grilla_actual_full.empty or not grilla_previa_full.empty:
+        top5_ing = calc.calcular_top5(df_maestro, "Ingenier")
+        top5_mov = calc.calcular_top5(df_maestro, "Móvil|Movil")
+        excel_bytes = tablero_excel.generar_workbook_tablero(
+            rango_previa=datos.rango_semana_legible(offset_semana - 1, hoy), grilla_previa=grilla_previa_full, subtotales_previa=subtotales_previa,
+            rango_actual=datos.rango_semana_legible(offset_semana, hoy), grilla_actual=grilla_actual_full, subtotales_actual=subtotales_actual,
+            avance_df=calc.avance_produccion(df_maestro, df_plan_actual if modo_demo else datos.load_todas_las_tareas_realizadas(), hoy),
+            metas_anuales_df=metas_mod.metas_anuales_a_df(metas),
+            bitacora_df=calc.bitacora_gestion_comercial(df_plan_actual),
+            top5_ingenieria=top5_ing, top5_movil=top5_mov,
+        )
         st.download_button(
-            "📥 Descargar Tablero (Excel)", data=buffer.getvalue(),
+            "📥 Descargar Tablero (Excel, formato original)", data=excel_bytes,
             file_name=f"Tablero_{week_id_actual}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )

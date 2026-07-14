@@ -160,6 +160,23 @@ def limpiar_monto(valor):
         return 0.0
 
 
+def parsear_fecha_flexible(valor):
+    """Igual que parsear_fecha_mov() de OpsControl: acepta texto dd/mm/aaaa
+    (formato chileno) y también números de serie de fecha de Excel (cuando
+    la celda llega como número plano en vez de fecha formateada)."""
+    if valor is None or str(valor).strip() in ("", "nan", "NaT", "None"):
+        return pd.NaT
+    s = str(valor).strip()
+    try:
+        if s.isdigit() or (s.replace(".", "", 1).isdigit() and "." in s):
+            serial = int(float(s))
+            if 20000 < serial < 60000:
+                return pd.Timestamp("1899-12-30") + pd.Timedelta(days=serial)
+    except Exception:
+        pass
+    return pd.to_datetime(s, dayfirst=True, errors="coerce")
+
+
 def calcular_tramo(fila, col_perdida="Perdida bruta (en moneda del caso)", col_divisa="Divisa"):
     divisa = str(fila.get(col_divisa, "")).upper()
     valor = limpiar_monto(fila.get(col_perdida, 0)) if col_perdida in fila else 0.0
