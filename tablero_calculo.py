@@ -181,8 +181,10 @@ def construir_grilla_con_totales(df_maestro, df_plan_semana, dias_semana, metas_
     # si sale negativo es una fecha mal registrada en el sistema, se descarta el valor.
     grilla.loc[grilla["Dias_prom"] < 0, "Dias_prom"] = None
 
+    # Descarta filas fantasma sin ningún dato (pueden aparecer para cualquier
+    # tramo por el cruce Stock/Ejecución, no solo en 'N/D').
     cols_actividad = ["Stock_Q", "Ajuste_Qp", "Ajuste_Qr", "IFL_Qp", "IFL_Qr"]
-    fila_vacia = (grilla["Tramo"] == "N/D") & (grilla[cols_actividad].fillna(0).sum(axis=1) == 0)
+    fila_vacia = grilla[cols_actividad].fillna(0).sum(axis=1) == 0
     grilla = grilla[~fila_vacia].reset_index(drop=True)
     if grilla.empty:
         return grilla
