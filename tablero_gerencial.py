@@ -21,6 +21,7 @@ import tablero_calculo as calc
 import tablero_datos as datos
 import tablero_excel
 import tablero_metas as metas_mod
+import tablero_snapshots as snap
 
 st.set_page_config(page_title="Tablero Gerencial — Ingeniería y Equipo Móvil", layout="wide", page_icon="🛠️")
 
@@ -97,7 +98,7 @@ def _generar_demo():
 # ---------------------------------------------------------
 # SIDEBAR: ESTADO DE CONEXIÓN Y SELECCIÓN DE SEMANA
 # ---------------------------------------------------------
-VERSION_CODIGO = "v9 · 2026-07-15 · metas precargadas, Equipo Móvil sin tramos"
+VERSION_CODIGO = "v10 · 2026-07-15 · semanas pasadas se congelan, solo se actualiza lo realizado"
 
 st.sidebar.title("🛠️ Tablero Gerencial")
 st.sidebar.caption("Fuente de datos: OpsControl (Base Maestra + Planes Semanales)")
@@ -170,8 +171,28 @@ def _formatear_para_pantalla(grilla):
     })
 
 
-grilla_previa_full = calc.construir_grilla_con_totales(df_maestro, df_plan_previa, dias_previa, metas_semanales_dict, metas_por_tramo_dict)
-grilla_actual_full = calc.construir_grilla_con_totales(df_maestro, df_plan_actual, dias_actual, metas_semanales_dict, metas_por_tramo_dict)
+def obtener_grilla_semana(df_plan_semana, dias_semana, week_id):
+    """Semana en curso (la real de hoy): siempre en vivo, todavía se está
+    planificando. Cualquier semana ya pasada: se congela la primera vez que
+    se ve como pasada (Stock/Programado/Meta quedan fijos tal como se
+    reportaron) y de ahí en adelante solo se refresca Q realizado/Hon
+    realizado — nunca se vuelve a recalcular el resto."""
+    grilla_en_vivo = calc.construir_grilla_con_totales(df_maestro, df_plan_semana, dias_semana, metas_semanales_dict, metas_por_tramo_dict)
+
+    if modo_demo or week_id == datos.get_week_identifier(0, hoy):
+        return grilla_en_vivo
+
+    congelada = snap.load_snapshot(week_id)
+    if congelada is None or congelada.empty:
+        snap.save_snapshot(week_id, grilla_en_vivo)
+        return grilla_en_vivo
+
+    ejecucion_viva = calc.ejecucion_viva_semana(df_maestro, df_plan_semana)
+    return snap.combinar_congelado_con_vivo(congelada, ejecucion_viva)
+
+
+grilla_previa_full = obtener_grilla_semana(df_plan_previa, dias_previa, week_id_previa)
+grilla_actual_full = obtener_grilla_semana(df_plan_actual, dias_actual, week_id_actual)
 subtotales_previa = calc.subtotales_por_division(grilla_previa_full)
 subtotales_actual = calc.subtotales_por_division(grilla_actual_full)
 

@@ -159,6 +159,14 @@ def _preparar_ejecucion(df_plan_semana, mapa_tramo_caso=None, dict_div=None):
     return resultado
 
 
+def ejecucion_viva_semana(df_maestro, df_plan_semana):
+    """Wrapper público: Ajuste/IFL Qr+HonrUF recalculados al día de hoy para
+    esa semana (usado para refrescar solo lo 'realizado' sobre una grilla
+    congelada — ver tablero_snapshots.py)."""
+    dict_div = dict_divisiones(df_maestro)
+    return _preparar_ejecucion(df_plan_semana, _mapa_tramo_por_caso(df_maestro), dict_div)
+
+
 def construir_grilla(df_maestro, df_plan_semana, dias_semana, metas_ajustador=None, metas_tramo=None):
     """Devuelve la grilla Division/Ajustador/Tramo con Stock + Ajuste + IFL,
     lista para mostrar tal como el Excel TABLERO_ING. Equipo Móvil no se
