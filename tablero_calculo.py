@@ -44,11 +44,33 @@ def _normalizar_division(texto_division):
     return texto_division
 
 
+# Segmentación especial: la cartera de ciertos clientes de un ajustador se
+# reporta aparte de sus tramos normales de pérdida (en vez de mezclarse con
+# el resto), porque su Días prom es muy distinto al de su cartera regular y
+# distorsionaría el promedio de sus tramos. Va como primera fila del bloque
+# del ajustador (ver orden_tramo en construir_grilla_con_totales).
+SEGMENTOS_ESPECIALES = {
+    "Francisco Silva Ghisolfo": {
+        "etiqueta": "Essbio + Nuevo Sur",
+        "clientes": ["essbio", "nuevo sur", "nuevosur"],
+    },
+}
+
+
+def _tramo_especial(ajustador, texto_cliente):
+    config = SEGMENTOS_ESPECIALES.get(str(ajustador).strip())
+    if not config:
+        return None
+    texto = str(texto_cliente or "").lower()
+    return config["etiqueta"] if any(clave in texto for clave in config["clientes"]) else None
+
+
 def _preparar_stock(df_maestro, dias_semana):
     c_aj = col(df_maestro, "ajustador")
     c_div = col(df_maestro, "division")
     c_estado = col(df_maestro, "estado")
     c_creado = col(df_maestro, "creado_en")
+    c_aseg = col(df_maestro, "asegurado")
 
     df = df_maestro.copy()
     df["_ajustador"] = df[c_aj].astype(str).str.strip() if c_aj else ""
@@ -63,6 +85,10 @@ def _preparar_stock(df_maestro, dias_semana):
     vigentes["_tramo"] = tramos
     # Equipo Móvil no se segmenta por tramo de pérdida: una sola fila por ajustador.
     vigentes.loc[vigentes["_division"].apply(_es_equipo_movil), "_tramo"] = "General"
+    # Segmentos especiales (p.ej. Essbio + Nuevo Sur de Francisco Silva) van aparte.
+    if c_aseg:
+        especial = vigentes.apply(lambda r: _tramo_especial(r["_ajustador"], r[c_aseg]), axis=1)
+        vigentes.loc[especial.notna(), "_tramo"] = especial[especial.notna()]
     vigentes["_honorarios"] = vigentes.apply(lambda r: honorarios_del_caso(r, df.columns), axis=1)
 
     if c_creado and c_creado in vigentes.columns:
@@ -145,6 +171,9 @@ def _preparar_ejecucion(df_plan_semana, mapa_tramo_caso=None, dict_div=None):
     # Equipo Móvil no se segmenta por tramo: una sola fila por ajustador.
     es_movil = df["Ajustador"].map(dict_div).apply(_es_equipo_movil)
     df.loc[es_movil, "_tramo"] = "General"
+    # Segmentos especiales (p.ej. Essbio + Nuevo Sur de Francisco Silva) van aparte.
+    especial = df.apply(lambda r: _tramo_especial(r["Ajustador"], r.get("asegurado", "")), axis=1)
+    df.loc[especial.notna(), "_tramo"] = especial[especial.notna()]
 
     programadas = df[df["tipo_actividad"] == "Programada"]
     realizadas = df[df["estado_cumplimiento"] == "Realizado"]
@@ -271,6 +300,8 @@ def construir_grilla_con_totales(df_maestro, df_plan_semana, dias_semana, metas_
     grilla["Gestion_Comercial"] = ""
     grilla["Extra"] = ""
     orden_tramo = {"General": 0, "<= 1000 UF": 0, "> 1000 Y <= 5000 UF": 1, "> 5000 UF (MCL)": 2, "N/D": 9}
+    for _cfg in SEGMENTOS_ESPECIALES.values():
+        orden_tramo[_cfg["etiqueta"]] = -1  # siempre primero en el bloque del ajustador
     grilla["_orden"] = grilla["Tramo"].map(orden_tramo).fillna(5)
     grilla = grilla.sort_values(["Division", "Ajustador", "_orden"]).drop(columns="_orden").reset_index(drop=True)
 

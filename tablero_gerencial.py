@@ -98,7 +98,7 @@ def _generar_demo():
 # ---------------------------------------------------------
 # SIDEBAR: ESTADO DE CONEXIÓN Y SELECCIÓN DE SEMANA
 # ---------------------------------------------------------
-VERSION_CODIGO = "v10 · 2026-07-15 · semanas pasadas se congelan, solo se actualiza lo realizado"
+VERSION_CODIGO = "v11 · 2026-07-15 · Essbio + Nuevo Sur de Francisco Silva aparte"
 
 st.sidebar.title("🛠️ Tablero Gerencial")
 st.sidebar.caption("Fuente de datos: OpsControl (Base Maestra + Planes Semanales)")
@@ -296,7 +296,9 @@ with tab_comercial:
 # ---------------------------------------------------------
 # TAB 5: CONFIGURACIÓN DE METAS (manual)
 # ---------------------------------------------------------
-OPCIONES_TRAMO = ["<= 1000 UF", "> 1000 Y <= 5000 UF", "> 5000 UF (MCL)", "General"]
+OPCIONES_TRAMO = ["<= 1000 UF", "> 1000 Y <= 5000 UF", "> 5000 UF (MCL)", "General"] + [
+    cfg["etiqueta"] for cfg in calc.SEGMENTOS_ESPECIALES.values()
+]
 
 with tab_metas:
     st.subheader("Meta semanal estándar por División y Tramo")
