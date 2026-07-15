@@ -81,7 +81,21 @@ def _resumen_bloque(df_tareas, es_ifl, col_q, col_hon):
     return q.merge(hon, on=["Ajustador", "_tramo"], how="left").rename(columns={"_tramo": "Tramo"})
 
 
-def _preparar_ejecucion(df_plan_semana):
+def _mapa_tramo_por_caso(df_maestro):
+    """{numero_caso: tramo} recalculado con calcular_tramo() (UF unificado),
+    para no depender del tramo que OpsControl guardó en su momento dentro de
+    cada tarea del plan (ese valor es de OTRA app, con su propia lógica de
+    tramos que todavía separa USD)."""
+    if df_maestro is None or df_maestro.empty:
+        return {}
+    c_num = col(df_maestro, "numero_caso")
+    if not c_num:
+        return {}
+    tramos, _ = zip(*df_maestro.apply(calcular_tramo, axis=1)) if len(df_maestro) else ([], [])
+    return dict(zip(df_maestro[c_num].astype(str).str.strip(), tramos))
+
+
+def _preparar_ejecucion(df_plan_semana, mapa_tramo_caso=None):
     columnas_vacias = ["Ajustador", "Tramo", "Ajuste_Qp", "Ajuste_HonpUF", "Ajuste_Qr", "Ajuste_HonrUF",
                         "IFL_Qp", "IFL_HonpUF", "IFL_Qr", "IFL_HonrUF"]
     if df_plan_semana is None or df_plan_semana.empty:
@@ -91,8 +105,14 @@ def _preparar_ejecucion(df_plan_semana):
     if df.empty:
         return pd.DataFrame(columns=columnas_vacias)
 
+    mapa_tramo_caso = mapa_tramo_caso or {}
     df["_es_ifl"] = df["accion"].astype(str).str.contains(REGEX_IFL, case=False, na=False)
-    df["_tramo"] = df["tramo_uf"].replace("", "N/D").fillna("N/D")
+    # Tramo recalculado a partir del caso en la Base Maestra (fuente de verdad,
+    # siempre en UF). Si el caso ya no está en la Base Maestra (p.ej. se cerró
+    # y salió del export), se cae al tramo que trae guardado la tarea.
+    numero_caso = df["numero_caso"].astype(str).str.strip()
+    df["_tramo"] = numero_caso.map(mapa_tramo_caso)
+    df["_tramo"] = df["_tramo"].fillna(df["tramo_uf"]).replace("", "N/D").fillna("N/D")
 
     programadas = df[df["tipo_actividad"] == "Programada"]
     realizadas = df[df["estado_cumplimiento"] == "Realizado"]
@@ -111,7 +131,7 @@ def construir_grilla(df_maestro, df_plan_semana, dias_semana, metas_config=None)
     """Devuelve la grilla Division/Ajustador/Tramo con Stock + Ajuste + IFL,
     lista para mostrar tal como el Excel TABLERO_ING."""
     stock = _preparar_stock(df_maestro, dias_semana)
-    ejecucion = _preparar_ejecucion(df_plan_semana)
+    ejecucion = _preparar_ejecucion(df_plan_semana, _mapa_tramo_por_caso(df_maestro))
 
     dict_div = dict(zip(stock["Ajustador"], stock["Division"])) if not stock.empty else {}
     ejecucion = ejecucion.copy()
