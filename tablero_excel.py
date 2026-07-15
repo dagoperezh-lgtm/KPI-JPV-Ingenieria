@@ -120,7 +120,7 @@ def _escribir_grilla_semana(ws, fila, titulo, grilla_con_totales, subtotales):
             elif clave == "Ajustador":
                 # Nombre + tramo pegados en la misma fila (igual que el Excel original),
                 # nunca el nombre solo en una fila aparte por encima del detalle.
-                valor = f"{ajustador} {fila_datos['Tramo']}"
+                valor = ajustador if fila_datos["Tramo"] == "General" else f"{ajustador} {fila_datos['Tramo']}"
             elif clave in ("Ajuste_Meta", "IFL_Meta"):
                 v = fila_datos.get(clave)
                 valor = None if v in (None, "") or (isinstance(v, float) and v != v) else v

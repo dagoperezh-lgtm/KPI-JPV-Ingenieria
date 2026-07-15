@@ -29,6 +29,21 @@ COLUMNAS_GRILLA = [
 COLUMNAS_NUMERICAS = [c for c in COLUMNAS_GRILLA if c not in ("Division", "Ajustador", "Tramo", "Dias_prom")]
 
 
+def _es_equipo_movil(texto_division):
+    return bool(pd.notna(texto_division)) and ("MÓVIL" in str(texto_division).upper() or "MOVIL" in str(texto_division).upper())
+
+
+def _normalizar_division(texto_division):
+    """La división real puede traer texto descriptivo adicional (p.ej.
+    'Equipo Móvil, Construcción e Industría'); para buscar la meta estándar
+    se usa una categoría fija, no el texto exacto."""
+    if _es_equipo_movil(texto_division):
+        return "Equipo Móvil"
+    if texto_division and "INGENIER" in str(texto_division).upper():
+        return "Ingeniería y Energía"
+    return texto_division
+
+
 def _preparar_stock(df_maestro, dias_semana):
     c_aj = col(df_maestro, "ajustador")
     c_div = col(df_maestro, "division")
@@ -46,6 +61,8 @@ def _preparar_stock(df_maestro, dias_semana):
 
     tramos, _ = zip(*vigentes.apply(calcular_tramo, axis=1))
     vigentes["_tramo"] = tramos
+    # Equipo Móvil no se segmenta por tramo de pérdida: una sola fila por ajustador.
+    vigentes.loc[vigentes["_division"].apply(_es_equipo_movil), "_tramo"] = "General"
     vigentes["_honorarios"] = vigentes.apply(lambda r: honorarios_del_caso(r, df.columns), axis=1)
 
     if c_creado and c_creado in vigentes.columns:
@@ -105,7 +122,7 @@ REMAPEO_TRAMO_LEGADO = {
 }
 
 
-def _preparar_ejecucion(df_plan_semana, mapa_tramo_caso=None):
+def _preparar_ejecucion(df_plan_semana, mapa_tramo_caso=None, dict_div=None):
     columnas_vacias = ["Ajustador", "Tramo", "Ajuste_Qp", "Ajuste_HonpUF", "Ajuste_Qr", "Ajuste_HonrUF",
                         "IFL_Qp", "IFL_HonpUF", "IFL_Qr", "IFL_HonrUF"]
     if df_plan_semana is None or df_plan_semana.empty:
@@ -116,6 +133,7 @@ def _preparar_ejecucion(df_plan_semana, mapa_tramo_caso=None):
         return pd.DataFrame(columns=columnas_vacias)
 
     mapa_tramo_caso = mapa_tramo_caso or {}
+    dict_div = dict_div or {}
     df["_es_ifl"] = df["accion"].astype(str).str.contains(REGEX_IFL, case=False, na=False)
     # Tramo recalculado a partir del caso en la Base Maestra (fuente de verdad,
     # siempre en UF). Si el caso ya no está en la Base Maestra (p.ej. se cerró
@@ -124,6 +142,9 @@ def _preparar_ejecucion(df_plan_semana, mapa_tramo_caso=None):
     tramo_heredado = df["tramo_uf"].replace(REMAPEO_TRAMO_LEGADO)
     df["_tramo"] = numero_caso.map(mapa_tramo_caso)
     df["_tramo"] = df["_tramo"].fillna(tramo_heredado).replace("", "N/D").fillna("N/D")
+    # Equipo Móvil no se segmenta por tramo: una sola fila por ajustador.
+    es_movil = df["Ajustador"].map(dict_div).apply(_es_equipo_movil)
+    df.loc[es_movil, "_tramo"] = "General"
 
     programadas = df[df["tipo_actividad"] == "Programada"]
     realizadas = df[df["estado_cumplimiento"] == "Realizado"]
@@ -138,15 +159,25 @@ def _preparar_ejecucion(df_plan_semana, mapa_tramo_caso=None):
     return resultado
 
 
-def construir_grilla(df_maestro, df_plan_semana, dias_semana, metas_config=None):
+def construir_grilla(df_maestro, df_plan_semana, dias_semana, metas_ajustador=None, metas_tramo=None):
     """Devuelve la grilla Division/Ajustador/Tramo con Stock + Ajuste + IFL,
-    lista para mostrar tal como el Excel TABLERO_ING."""
-    stock = _preparar_stock(df_maestro, dias_semana)
-    ejecucion = _preparar_ejecucion(df_plan_semana, _mapa_tramo_por_caso(df_maestro))
+    lista para mostrar tal como el Excel TABLERO_ING. Equipo Móvil no se
+    segmenta por tramo (Tramo='General').
 
-    dict_div = dict(zip(stock["Ajustador"], stock["Division"])) if not stock.empty else {}
+    metas_ajustador: {(ajustador,tramo,tipo): valor} — excepción puntual.
+    metas_tramo: {(division,tramo,tipo): valor} — estándar por tramo/división,
+    se usa cuando no hay excepción para ese ajustador."""
+    dict_div = dict_divisiones(df_maestro)
+    stock = _preparar_stock(df_maestro, dias_semana)
+    ejecucion = _preparar_ejecucion(df_plan_semana, _mapa_tramo_por_caso(df_maestro), dict_div)
+
+    dict_div_stock = dict(zip(stock["Ajustador"], stock["Division"])) if not stock.empty else {}
     ejecucion = ejecucion.copy()
-    ejecucion["Division"] = ejecucion["Ajustador"].map(dict_div).fillna("Sin División") if not ejecucion.empty else pd.Series(dtype=str)
+    if not ejecucion.empty:
+        ejecucion["Division"] = ejecucion["Ajustador"].map(dict_div_stock)
+        ejecucion["Division"] = ejecucion["Division"].fillna(ejecucion["Ajustador"].map(dict_div)).fillna("Sin División")
+    else:
+        ejecucion["Division"] = pd.Series(dtype=str)
 
     if stock.empty and ejecucion.empty:
         return pd.DataFrame(columns=COLUMNAS_GRILLA)
@@ -163,9 +194,17 @@ def construir_grilla(df_maestro, df_plan_semana, dias_semana, metas_config=None)
     if "Dias_prom" in grilla.columns:
         grilla["Dias_prom"] = grilla["Dias_prom"].round(0)
 
-    metas_config = metas_config or {}
-    grilla["Ajuste_Meta"] = grilla.apply(lambda r: metas_config.get((r["Ajustador"], r["Tramo"], "Ajuste"), None), axis=1)
-    grilla["IFL_Meta"] = grilla.apply(lambda r: metas_config.get((r["Ajustador"], r["Tramo"], "IFL"), None), axis=1)
+    metas_ajustador = metas_ajustador or {}
+    metas_tramo = metas_tramo or {}
+
+    def _meta(fila, tipo):
+        clave_aj = (fila["Ajustador"], fila["Tramo"], tipo)
+        if clave_aj in metas_ajustador:
+            return metas_ajustador[clave_aj]
+        return metas_tramo.get((_normalizar_division(fila["Division"]), fila["Tramo"], tipo), None)
+
+    grilla["Ajuste_Meta"] = grilla.apply(lambda r: _meta(r, "Ajuste"), axis=1)
+    grilla["IFL_Meta"] = grilla.apply(lambda r: _meta(r, "IFL"), axis=1)
 
     for c in COLUMNAS_GRILLA:
         if c not in grilla.columns:
@@ -197,13 +236,13 @@ def notas_por_ajustador(df_plan_semana):
     return {aj: {"comercial": comercial.get(aj, ""), "extra": extra.get(aj, "")} for aj in ajustadores}
 
 
-def construir_grilla_con_totales(df_maestro, df_plan_semana, dias_semana, metas_config=None):
+def construir_grilla_con_totales(df_maestro, df_plan_semana, dias_semana, metas_ajustador=None, metas_tramo=None):
     """Igual que construir_grilla(), pero en el formato del Excel: una fila
     por Ajustador+Tramo (el nombre va PEGADO a su tramo, no en una fila
     aparte por encima de la segmentación). Las notas de Gestión Comercial /
     Extra de la semana se muestran en la PRIMERA fila de cada ajustador.
     Se descartan las filas sin ningún dato (tramo 'N/D' completamente vacío)."""
-    grilla = construir_grilla(df_maestro, df_plan_semana, dias_semana, metas_config)
+    grilla = construir_grilla(df_maestro, df_plan_semana, dias_semana, metas_ajustador, metas_tramo)
     if grilla.empty:
         return grilla
 
@@ -223,7 +262,7 @@ def construir_grilla_con_totales(df_maestro, df_plan_semana, dias_semana, metas_
     notas = notas_por_ajustador(df_plan_semana)
     grilla["Gestion_Comercial"] = ""
     grilla["Extra"] = ""
-    orden_tramo = {"<= 1000 UF": 0, "> 1000 Y <= 5000 UF": 1, "> 5000 UF (MCL)": 2, "N/D": 9}
+    orden_tramo = {"General": 0, "<= 1000 UF": 0, "> 1000 Y <= 5000 UF": 1, "> 5000 UF (MCL)": 2, "N/D": 9}
     grilla["_orden"] = grilla["Tramo"].map(orden_tramo).fillna(5)
     grilla = grilla.sort_values(["Division", "Ajustador", "_orden"]).drop(columns="_orden").reset_index(drop=True)
 
@@ -296,7 +335,7 @@ def avance_produccion(df_maestro, df_tareas_realizadas, hoy):
     df_anio = df[df["_fecha_ej"].dt.year == hoy.year].copy()
 
     dict_div = dict_divisiones(df_maestro)
-    df_anio["Division"] = df_anio["Ajustador"].map(dict_div).fillna("Sin División")
+    df_anio["Division"] = df_anio["Ajustador"].map(dict_div).fillna("Sin División").apply(_normalizar_division)
     df_mes = df_anio[df_anio["_fecha_ej"].dt.month == hoy.month]
 
     acumulada = df_anio.groupby("Division")["honorarios_estimados"].sum()

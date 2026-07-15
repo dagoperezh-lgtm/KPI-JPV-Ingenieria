@@ -97,7 +97,7 @@ def _generar_demo():
 # ---------------------------------------------------------
 # SIDEBAR: ESTADO DE CONEXIÓN Y SELECCIÓN DE SEMANA
 # ---------------------------------------------------------
-VERSION_CODIGO = "v8 · 2026-07-15 · casos cerrados también traducidos a UF"
+VERSION_CODIGO = "v9 · 2026-07-15 · metas precargadas, Equipo Móvil sin tramos"
 
 st.sidebar.title("🛠️ Tablero Gerencial")
 st.sidebar.caption("Fuente de datos: OpsControl (Base Maestra + Planes Semanales)")
@@ -132,6 +132,7 @@ else:
 
 metas = metas_mod.load_metas()
 metas_semanales_dict = metas_mod.metas_semanales_como_dict(metas)
+metas_por_tramo_dict = metas_mod.metas_por_tramo_como_dict(metas)
 
 st.title("🛠️ Tablero Gerencial — Ingeniería y Equipo Móvil")
 st.caption(f"Semana actual: {datos.rango_semana_legible(offset_semana, hoy)}  ·  Semana anterior: {datos.rango_semana_legible(offset_semana - 1, hoy)}")
@@ -157,7 +158,7 @@ def _formatear_para_pantalla(grilla):
         df[c] = df[c].fillna(0).astype(int)
     df["Ajuste_Meta"] = df["Ajuste_Meta"].apply(lambda v: "-" if pd.isna(v) else int(v))
     df["IFL_Meta"] = df["IFL_Meta"].apply(lambda v: "-" if pd.isna(v) else int(v))
-    df["Ajustador"] = df["Ajustador"] + " — " + df["Tramo"]
+    df["Ajustador"] = df.apply(lambda r: r["Ajustador"] if r["Tramo"] == "General" else f"{r['Ajustador']} — {r['Tramo']}", axis=1)
     return df.drop(columns=["Tramo"]).rename(columns={
         "Division": "División", "Ajustador": "Ajustador / Tramo",
         "Asignados": "Asignados", "Stock_Q": "Q", "Dias_prom": "Días prom", "Stock_Hon_UF": "Hon UF",
@@ -169,8 +170,8 @@ def _formatear_para_pantalla(grilla):
     })
 
 
-grilla_previa_full = calc.construir_grilla_con_totales(df_maestro, df_plan_previa, dias_previa, metas_semanales_dict)
-grilla_actual_full = calc.construir_grilla_con_totales(df_maestro, df_plan_actual, dias_actual, metas_semanales_dict)
+grilla_previa_full = calc.construir_grilla_con_totales(df_maestro, df_plan_previa, dias_previa, metas_semanales_dict, metas_por_tramo_dict)
+grilla_actual_full = calc.construir_grilla_con_totales(df_maestro, df_plan_actual, dias_actual, metas_semanales_dict, metas_por_tramo_dict)
 subtotales_previa = calc.subtotales_por_division(grilla_previa_full)
 subtotales_actual = calc.subtotales_por_division(grilla_actual_full)
 
@@ -274,15 +275,35 @@ with tab_comercial:
 # ---------------------------------------------------------
 # TAB 5: CONFIGURACIÓN DE METAS (manual)
 # ---------------------------------------------------------
+OPCIONES_TRAMO = ["<= 1000 UF", "> 1000 Y <= 5000 UF", "> 5000 UF (MCL)", "General"]
+
 with tab_metas:
-    st.subheader("Meta semanal por Ajustador y Tramo (cuota de entregables)")
-    st.caption("Cantidad de entregables Ajuste / IFL que se espera que cada ajustador cumpla por semana en cada tramo. No se calcula de ningún caso: es un objetivo que define la gerencia.")
+    st.subheader("Meta semanal estándar por División y Tramo")
+    st.caption(
+        "Cuota de entregables Ajuste/IFL que se espera por semana para TODOS los ajustadores de esa "
+        "división en ese tramo (Equipo Móvil no se segmenta por tramo, usa 'General'). No se calcula de "
+        "ningún caso: es un objetivo que define la gerencia y no cambia durante el año."
+    )
+    df_metas_tramo = metas_mod.metas_por_tramo_a_df(metas)
+    metas_tramo_editado = st.data_editor(
+        df_metas_tramo, num_rows="dynamic", use_container_width=True, key="editor_metas_por_tramo",
+        column_config={
+            "division": st.column_config.TextColumn("División"),
+            "tramo": st.column_config.SelectboxColumn("Tramo", options=OPCIONES_TRAMO),
+            "tipo": st.column_config.SelectboxColumn("Tipo", options=["Ajuste", "IFL"]),
+            "valor": st.column_config.NumberColumn("Meta (Q)", min_value=0, step=1),
+        },
+    )
+
+    st.markdown("---")
+    st.subheader("Excepciones por Ajustador (opcional)")
+    st.caption("Solo para un ajustador puntual cuya meta sea distinta al estándar de su tramo/división de arriba. Tiene prioridad sobre la meta estándar.")
     df_metas_sem = metas_mod.metas_semanales_a_df(metas)
     metas_sem_editado = st.data_editor(
         df_metas_sem, num_rows="dynamic", use_container_width=True, key="editor_metas_semanales",
         column_config={
             "ajustador": st.column_config.TextColumn("Ajustador"),
-            "tramo": st.column_config.SelectboxColumn("Tramo", options=["<= 1000 UF", "> 1000 Y <= 5000 UF", "> 5000 UF (MCL)"]),
+            "tramo": st.column_config.SelectboxColumn("Tramo", options=OPCIONES_TRAMO),
             "tipo": st.column_config.SelectboxColumn("Tipo", options=["Ajuste", "IFL"]),
             "valor": st.column_config.NumberColumn("Meta (Q)", min_value=0, step=1),
         },
@@ -303,6 +324,7 @@ with tab_metas:
     if st.button("💾 Guardar Metas", type="primary"):
         nuevas_metas = {
             "metas_semanales": metas_mod.metas_semanales_desde_df(metas_sem_editado),
+            "metas_por_tramo": metas_mod.metas_por_tramo_desde_df(metas_tramo_editado),
             "metas_anuales": metas_mod.metas_anuales_desde_df(metas_anio_editado),
         }
         metas_mod.save_metas(nuevas_metas)
