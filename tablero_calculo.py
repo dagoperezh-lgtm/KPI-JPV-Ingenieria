@@ -95,6 +95,16 @@ def _mapa_tramo_por_caso(df_maestro):
     return dict(zip(df_maestro[c_num].astype(str).str.strip(), tramos))
 
 
+# Para casos que ya no están en la Base Maestra (se cerraron y OpsControl los
+# excluye del export): no hay monto para recalcular su tramo exacto, así que
+# se traduce el tramo heredado (con USD) a su equivalente más cercano en UF,
+# en vez de mostrar la etiqueta USD tal cual.
+REMAPEO_TRAMO_LEGADO = {
+    "<= 200.000 USD": "> 1000 Y <= 5000 UF",
+    "> 200.000 USD (MCL)": "> 5000 UF (MCL)",
+}
+
+
 def _preparar_ejecucion(df_plan_semana, mapa_tramo_caso=None):
     columnas_vacias = ["Ajustador", "Tramo", "Ajuste_Qp", "Ajuste_HonpUF", "Ajuste_Qr", "Ajuste_HonrUF",
                         "IFL_Qp", "IFL_HonpUF", "IFL_Qr", "IFL_HonrUF"]
@@ -109,10 +119,11 @@ def _preparar_ejecucion(df_plan_semana, mapa_tramo_caso=None):
     df["_es_ifl"] = df["accion"].astype(str).str.contains(REGEX_IFL, case=False, na=False)
     # Tramo recalculado a partir del caso en la Base Maestra (fuente de verdad,
     # siempre en UF). Si el caso ya no está en la Base Maestra (p.ej. se cerró
-    # y salió del export), se cae al tramo que trae guardado la tarea.
+    # y salió del export), se traduce el tramo heredado de la tarea a UF.
     numero_caso = df["numero_caso"].astype(str).str.strip()
+    tramo_heredado = df["tramo_uf"].replace(REMAPEO_TRAMO_LEGADO)
     df["_tramo"] = numero_caso.map(mapa_tramo_caso)
-    df["_tramo"] = df["_tramo"].fillna(df["tramo_uf"]).replace("", "N/D").fillna("N/D")
+    df["_tramo"] = df["_tramo"].fillna(tramo_heredado).replace("", "N/D").fillna("N/D")
 
     programadas = df[df["tipo_actividad"] == "Programada"]
     realizadas = df[df["estado_cumplimiento"] == "Realizado"]

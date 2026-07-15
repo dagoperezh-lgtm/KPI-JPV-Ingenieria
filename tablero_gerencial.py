@@ -97,7 +97,7 @@ def _generar_demo():
 # ---------------------------------------------------------
 # SIDEBAR: ESTADO DE CONEXIÓN Y SELECCIÓN DE SEMANA
 # ---------------------------------------------------------
-VERSION_CODIGO = "v7 · 2026-07-15 · tramo de tareas recalculado desde Base Maestra"
+VERSION_CODIGO = "v8 · 2026-07-15 · casos cerrados también traducidos a UF"
 
 st.sidebar.title("🛠️ Tablero Gerencial")
 st.sidebar.caption("Fuente de datos: OpsControl (Base Maestra + Planes Semanales)")
