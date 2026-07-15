@@ -97,8 +97,11 @@ def _generar_demo():
 # ---------------------------------------------------------
 # SIDEBAR: ESTADO DE CONEXIÓN Y SELECCIÓN DE SEMANA
 # ---------------------------------------------------------
+VERSION_CODIGO = "v6 · 2026-07-14 · tramos unificados a UF, sin filas fantasma"
+
 st.sidebar.title("🛠️ Tablero Gerencial")
 st.sidebar.caption("Fuente de datos: OpsControl (Base Maestra + Planes Semanales)")
+st.sidebar.info(f"🔖 Versión de código en ejecución:\n\n**{VERSION_CODIGO}**")
 
 modo_demo = False
 df_maestro, fecha_actualizacion = datos.load_base_maestra()
