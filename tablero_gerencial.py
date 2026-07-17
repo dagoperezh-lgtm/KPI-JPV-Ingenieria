@@ -98,7 +98,7 @@ def _generar_demo():
 # ---------------------------------------------------------
 # SIDEBAR: ESTADO DE CONEXIÓN Y SELECCIÓN DE SEMANA
 # ---------------------------------------------------------
-VERSION_CODIGO = "v11 · 2026-07-15 · Essbio + Nuevo Sur de Francisco Silva aparte"
+VERSION_CODIGO = "v12 · 2026-07-15 · orden fijo de división y ajustadores igual al Excel"
 
 st.sidebar.title("🛠️ Tablero Gerencial")
 st.sidebar.caption("Fuente de datos: OpsControl (Base Maestra + Planes Semanales)")
@@ -205,7 +205,7 @@ with tab_grilla:
         if grilla_full.empty:
             st.info("Sin casos ni planes registrados para este período.")
             continue
-        for division in sorted(grilla_full["Division"].unique()):
+        for division in grilla_full["Division"].unique():  # ya viene en el orden correcto (no alfabético)
             with st.expander(f"**{division}**", expanded=True):
                 sub = _formatear_para_pantalla(grilla_full[grilla_full["Division"] == division].drop(columns=["Division"]))
                 st.dataframe(sub, use_container_width=True, hide_index=True)

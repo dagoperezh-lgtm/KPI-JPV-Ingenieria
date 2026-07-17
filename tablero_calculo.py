@@ -65,6 +65,32 @@ def _tramo_especial(ajustador, texto_cliente):
     return config["etiqueta"] if any(clave in texto for clave in config["clientes"]) else None
 
 
+# Orden fijo tal como aparece en el Tablero manual (no alfabético). Los
+# ajustadores/divisiones que no estén en esta lista se agregan al final,
+# ordenados alfabéticamente entre ellos, para que un ajustador nuevo no
+# rompa nada.
+ORDEN_DIVISIONES = ["Ingeniería y Energía", "Equipo Móvil"]
+ORDEN_AJUSTADORES = [
+    "Francisco Silva Ghisolfo",
+    "Dagoberto Pérez Herrera",
+    "Alan Patrick Swain Smith",
+    "Camilo Steven Abarzua Cerda",
+    "Nelson Canio Fernandez",
+    "Mauricio Muñoz P",
+    "Leopoldo Soto V.",
+]
+
+
+def _orden_division(division):
+    normalizada = _normalizar_division(division)
+    return ORDEN_DIVISIONES.index(normalizada) if normalizada in ORDEN_DIVISIONES else len(ORDEN_DIVISIONES)
+
+
+def _orden_ajustador(ajustador):
+    ajustador = str(ajustador).strip()
+    return ORDEN_AJUSTADORES.index(ajustador) if ajustador in ORDEN_AJUSTADORES else len(ORDEN_AJUSTADORES)
+
+
 def _preparar_stock(df_maestro, dias_semana):
     c_aj = col(df_maestro, "ajustador")
     c_div = col(df_maestro, "division")
@@ -247,7 +273,10 @@ def construir_grilla(df_maestro, df_plan_semana, dias_semana, metas_ajustador=No
         if c not in grilla.columns:
             grilla[c] = None
 
-    return grilla[COLUMNAS_GRILLA].sort_values(["Division", "Ajustador", "Tramo"]).reset_index(drop=True)
+    grilla["_orden_div"] = grilla["Division"].apply(_orden_division)
+    grilla["_orden_aj"] = grilla["Ajustador"].apply(_orden_ajustador)
+    grilla = grilla.sort_values(["_orden_div", "Division", "_orden_aj", "Ajustador", "Tramo"])
+    return grilla[COLUMNAS_GRILLA].reset_index(drop=True)
 
 
 def notas_por_ajustador(df_plan_semana):
@@ -303,7 +332,13 @@ def construir_grilla_con_totales(df_maestro, df_plan_semana, dias_semana, metas_
     for _cfg in SEGMENTOS_ESPECIALES.values():
         orden_tramo[_cfg["etiqueta"]] = -1  # siempre primero en el bloque del ajustador
     grilla["_orden"] = grilla["Tramo"].map(orden_tramo).fillna(5)
-    grilla = grilla.sort_values(["Division", "Ajustador", "_orden"]).drop(columns="_orden").reset_index(drop=True)
+    grilla["_orden_div"] = grilla["Division"].apply(_orden_division)
+    grilla["_orden_aj"] = grilla["Ajustador"].apply(_orden_ajustador)
+    grilla = (
+        grilla.sort_values(["_orden_div", "Division", "_orden_aj", "Ajustador", "_orden"])
+        .drop(columns=["_orden", "_orden_div", "_orden_aj"])
+        .reset_index(drop=True)
+    )
 
     primera_fila_idx = grilla.groupby(["Division", "Ajustador"], sort=False).head(1).index
     for idx in primera_fila_idx:
@@ -320,6 +355,7 @@ def subtotales_por_division(grilla_con_totales):
         return pd.DataFrame(columns=["Division"] + COLUMNAS_NUMERICAS)
     suma_cols = [c for c in COLUMNAS_NUMERICAS if c not in ("Ajuste_Meta", "IFL_Meta")]
     subtotal = grilla_con_totales.groupby("Division")[suma_cols].sum().reset_index()
+    subtotal = subtotal.sort_values(by="Division", key=lambda s: s.apply(_orden_division)).reset_index(drop=True)
     total = pd.DataFrame([{"Division": "TOTAL GENERAL", **{c: grilla_con_totales[c].sum() for c in suma_cols}}])
     return pd.concat([subtotal, total], ignore_index=True)
 
