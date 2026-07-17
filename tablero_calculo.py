@@ -174,6 +174,13 @@ REMAPEO_TRAMO_LEGADO = {
 }
 
 
+# El Tablero solo cuenta entregables (informes/cartas/addendums), no
+# cualquier tarea operativa. En OpsControl los entregables son las tareas
+# de la categoría "Preparar Informe" (el resto — Inspección, Correos,
+# Reunión, "En Ajuste" genérico, Otra Acción — no cuenta como producción).
+PREFIJO_ENTREGABLE = "Preparar Informe"
+
+
 def _preparar_ejecucion(df_plan_semana, mapa_tramo_caso=None, dict_div=None):
     columnas_vacias = ["Ajustador", "Tramo", "Ajuste_Qp", "Ajuste_HonpUF", "Ajuste_Qr", "Ajuste_HonrUF",
                         "IFL_Qp", "IFL_HonpUF", "IFL_Qr", "IFL_HonrUF"]
@@ -181,6 +188,7 @@ def _preparar_ejecucion(df_plan_semana, mapa_tramo_caso=None, dict_div=None):
         return pd.DataFrame(columns=columnas_vacias)
 
     df = df_plan_semana[df_plan_semana.get("categoria", "") == "Operativa"].copy()
+    df = df[df["accion"].astype(str).str.strip().str.startswith(PREFIJO_ENTREGABLE)]
     if df.empty:
         return pd.DataFrame(columns=columnas_vacias)
 

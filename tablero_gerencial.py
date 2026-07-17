@@ -98,7 +98,7 @@ def _generar_demo():
 # ---------------------------------------------------------
 # SIDEBAR: ESTADO DE CONEXIÓN Y SELECCIÓN DE SEMANA
 # ---------------------------------------------------------
-VERSION_CODIGO = "v12 · 2026-07-15 · orden fijo de división y ajustadores igual al Excel"
+VERSION_CODIGO = "v13 · 2026-07-17 · solo entregables cuentan como Ajuste/IFL"
 
 st.sidebar.title("🛠️ Tablero Gerencial")
 st.sidebar.caption("Fuente de datos: OpsControl (Base Maestra + Planes Semanales)")
