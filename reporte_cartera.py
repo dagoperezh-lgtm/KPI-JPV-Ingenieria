@@ -27,8 +27,12 @@ TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "assets", "plantilla_est
 
 # Pipeline actualizado por el equipo en Google Sheets, compartido en modo
 # Lector con la cuenta de servicio opscontrol-bot@... (misma cuenta que ya
-# usa OpsControl para la Base Maestra en tablero_datos.py).
+# usa OpsControl para la Base Maestra en tablero_datos.py). Los datos viven
+# en la pestaña Pipeline_Backup, con la misma estructura que Base_Maestra:
+# fila 1 = metadata (FECHA_ACTUALIZACION), fila 2 = encabezados reales.
 PIPELINE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1aZYWn1JI_w4S9mQFpaCJRAQfr6E0iKqXMcMJ_xxlaNI/edit?usp=sharing"
+PIPELINE_WORKSHEET_NAME = "Pipeline_Backup"
+PIPELINE_HEADER_ROW = 2
 
 MCL_UF = 5000
 MCL_USD = 200000
@@ -103,7 +107,7 @@ def cargar_pipeline_desde_google_sheets(credenciales_sa, sheet_url=None, workshe
 
     credenciales_sa: dict con el JSON de la cuenta de servicio.
     sheet_url: enlace del Google Sheet (por defecto PIPELINE_SHEET_URL).
-    worksheet_name: nombre de la pestaña a leer (por defecto, la primera).
+    worksheet_name: nombre de la pestaña a leer (por defecto PIPELINE_WORKSHEET_NAME).
     """
     if gspread is None:
         raise RuntimeError("Faltan las librerías 'gspread' y 'google-auth' (revisa requirements.txt).")
@@ -114,8 +118,8 @@ def cargar_pipeline_desde_google_sheets(credenciales_sa, sheet_url=None, workshe
     creds = Credentials.from_service_account_info(credenciales_sa, scopes=scope)
     client = gspread.authorize(creds)
     doc = client.open_by_url(sheet_url or PIPELINE_SHEET_URL)
-    hoja = doc.worksheet(worksheet_name) if worksheet_name else doc.sheet1
-    return pd.DataFrame(hoja.get_all_records())
+    hoja = doc.worksheet(worksheet_name or PIPELINE_WORKSHEET_NAME)
+    return pd.DataFrame(hoja.get_all_records(head=PIPELINE_HEADER_ROW))
 
 
 def filtrar_pipeline(df_pipeline, corredoras=None, aseguradoras=None, asegurados=None):
