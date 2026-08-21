@@ -13,6 +13,10 @@ import reporte_cartera
 # --- SECCIÓN 1: CONFIGURACIÓN Y MOTOR DE CARGA ---
 st.set_page_config(page_title="Dashboard de Gestión: Procesos y Tendencias", layout="wide", page_icon="⚙️")
 
+@st.cache_data(ttl=300, show_spinner="Descargando Pipeline desde Google Sheets...")
+def cargar_pipeline_google_cacheado():
+    return reporte_cartera.cargar_pipeline_desde_google_sheets(dict(st.secrets["gcp_service_account"]))
+
 @st.cache_data
 def generar_datos_prueba():
     np.random.seed(42)
@@ -184,12 +188,39 @@ tab_reporte, tab_energia, tab_moviles, tab_tendencias = st.tabs([
 with tab_reporte:
     st.subheader("📑 Reporte Ejecutivo de Cartera (PPTX)")
 
-    archivo_pipeline = st.file_uploader("Cargar Pipeline (Excel)", type=["xlsx"], key="archivo_pipeline")
+    df_pipeline = None
+    conectado_google = "gcp_service_account" in st.secrets
 
-    if archivo_pipeline is None:
-        st.info("Sube el archivo de Pipeline para generar el reporte.")
+    col_fuente, col_actualizar = st.columns([4, 1])
+    with col_fuente:
+        if conectado_google:
+            st.caption("🔗 Pipeline conectado automáticamente desde Google Sheets.")
+        else:
+            st.caption("Conexión a Google Sheets no configurada todavía; sube el archivo manualmente.")
+    with col_actualizar:
+        if conectado_google and st.button("🔄 Actualizar Pipeline", use_container_width=True, key="btn_actualizar_pipeline"):
+            cargar_pipeline_google_cacheado.clear()
+
+    if conectado_google:
+        try:
+            df_pipeline = cargar_pipeline_google_cacheado()
+        except Exception as e:
+            st.error(
+                "No se pudo leer el Pipeline desde Google Sheets. Verifica que la hoja esté "
+                f"compartida como Lector con la cuenta de servicio. Detalle: {e}"
+            )
+
+    if df_pipeline is None:
+        archivo_pipeline = st.file_uploader(
+            "Cargar Pipeline (Excel) — respaldo manual" if conectado_google else "Cargar Pipeline (Excel)",
+            type=["xlsx"], key="archivo_pipeline",
+        )
+        if archivo_pipeline is not None:
+            df_pipeline = reporte_cartera.cargar_pipeline(archivo_pipeline)
+
+    if df_pipeline is None:
+        st.info("Conecta el Pipeline desde Google Sheets o sube el archivo para generar el reporte.")
     else:
-        df_pipeline = reporte_cartera.cargar_pipeline(archivo_pipeline)
 
         st.markdown("#### Panorama general del Pipeline (Top 5)")
         col_g1, col_g2, col_g3 = st.columns(3)

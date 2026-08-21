@@ -16,7 +16,19 @@ import pandas as pd
 from pptx import Presentation
 from pptx.chart.data import CategoryChartData
 
+try:
+    import gspread
+    from google.oauth2.service_account import Credentials
+except ImportError:
+    gspread = None
+    Credentials = None
+
 TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "assets", "plantilla_estado_cartera.pptx")
+
+# Pipeline actualizado por el equipo en Google Sheets, compartido en modo
+# Lector con la cuenta de servicio opscontrol-bot@... (misma cuenta que ya
+# usa OpsControl para la Base Maestra en tablero_datos.py).
+PIPELINE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1aZYWn1JI_w4S9mQFpaCJRAQfr6E0iKqXMcMJ_xxlaNI/edit?usp=sharing"
 
 MCL_UF = 5000
 MCL_USD = 200000
@@ -81,6 +93,29 @@ def cargar_pipeline(archivo, sheet_name=None):
     xl = pd.ExcelFile(archivo)
     hoja = sheet_name or xl.sheet_names[0]
     return pd.read_excel(archivo, sheet_name=hoja)
+
+
+def cargar_pipeline_desde_google_sheets(credenciales_sa, sheet_url=None, worksheet_name=None):
+    """Descarga el Pipeline directamente desde Google Sheets usando una cuenta
+    de servicio (st.secrets["gcp_service_account"]). No requiere que la hoja
+    esté compartida públicamente: basta con compartirla como Lector con el
+    email de la cuenta de servicio.
+
+    credenciales_sa: dict con el JSON de la cuenta de servicio.
+    sheet_url: enlace del Google Sheet (por defecto PIPELINE_SHEET_URL).
+    worksheet_name: nombre de la pestaña a leer (por defecto, la primera).
+    """
+    if gspread is None:
+        raise RuntimeError("Faltan las librerías 'gspread' y 'google-auth' (revisa requirements.txt).")
+    scope = [
+        "https://www.googleapis.com/auth/spreadsheets.readonly",
+        "https://www.googleapis.com/auth/drive.readonly",
+    ]
+    creds = Credentials.from_service_account_info(credenciales_sa, scopes=scope)
+    client = gspread.authorize(creds)
+    doc = client.open_by_url(sheet_url or PIPELINE_SHEET_URL)
+    hoja = doc.worksheet(worksheet_name) if worksheet_name else doc.sheet1
+    return pd.DataFrame(hoja.get_all_records())
 
 
 def filtrar_pipeline(df_pipeline, corredoras=None, aseguradoras=None, asegurados=None):
