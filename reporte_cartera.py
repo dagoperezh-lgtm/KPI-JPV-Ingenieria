@@ -63,7 +63,7 @@ SLIDE3 = dict(mcl_count=11, mcl_pct_line=12, mcl_sum_line=13,
               aseg3_nombre=27, aseg3_count=29, aseg4_nombre=30, aseg4_count=32,
               aseg_otros_count=35)
 SLIDE4 = dict(tier100=12, tier75=18, tier50=24, tier0=30)
-SLIDE5 = dict(caso_mas_antiguo=9, promedio_cartera=12, casos_600=15, tabla=17)
+SLIDE5 = dict(caso_mas_antiguo=9, promedio_cartera=12, promedio_cartera_label=13, casos_600=15, tabla=17)
 SLIDE6 = dict(intro=8, alerta=11, tabla=9)
 SLIDE7 = dict(
     footer=32,
@@ -89,6 +89,16 @@ def fmt_usd_m(valor):
 
 def fmt_fecha_larga(fecha):
     return f"{fecha.day} de {MESES_ES[fecha.month]} de {fecha.year}"
+
+
+def _truncar_texto(texto, max_chars):
+    """Recorta observaciones largas para que la fila no crezca más de lo que
+    permite la plantilla (si no, las últimas filas de la tabla quedan fuera
+    del área visible de la slide en modo presentación)."""
+    texto = str(texto).strip()
+    if len(texto) <= max_chars:
+        return texto
+    return texto[: max_chars - 1].rstrip() + "…"
 
 
 def cargar_pipeline(archivo, sheet_name=None):
@@ -376,13 +386,16 @@ def generar_pptx(fecha_corte, titulo_cartera, tabla, pasos, alerta_prioritaria):
     s5 = prs.slides[4]
     _set_shape_text(s5, SLIDE5["caso_mas_antiguo"], f"{kpis['dias_max']} días")
     _set_shape_text(s5, SLIDE5["promedio_cartera"], f"~{kpis['dias_prom']} días")
+    etiqueta_promedio = "Promedio cartera" if titulo_cartera == "Cartera General" else f"Promedio cartera {titulo_cartera}"
+    _set_shape_text(s5, SLIDE5["promedio_cartera_label"], etiqueta_promedio)
     _set_shape_text(s5, SLIDE5["casos_600"], f"{kpis['dias_600']} caso" + ("s" if kpis["dias_600"] != 1 else ""))
     top10_antiguos = tabla.sort_values("Dias", ascending=False).head(10)
     filas = []
     for i, (_, row) in enumerate(top10_antiguos.iterrows(), start=1):
+        observacion = row["Observacion"] or row["Observacion_sugerida"]
         filas.append([
             i, row["Caso"], row["Nickname"], row["Divisa"], row["Dias"],
-            f"{int(row['Prob'])}%", row["Observacion"] or row["Observacion_sugerida"],
+            f"{int(row['Prob'])}%", _truncar_texto(observacion, 100),
         ])
     _fill_table_rows(_get_table(s5, SLIDE5["tabla"]), filas)
 
@@ -398,9 +411,10 @@ def generar_pptx(fecha_corte, titulo_cartera, tabla, pasos, alerta_prioritaria):
     _set_shape_text(s6, SLIDE6["alerta"], alerta_prioritaria)
     filas = []
     for _, row in atencion.iterrows():
+        observacion = row["Observacion"] or row["Observacion_sugerida"]
         filas.append([
             row["Caso"], row["Nickname"], f"{int(row['Prob'])}%", row["Divisa"],
-            "✓" if row["MCL"] else "", row["Observacion"] or row["Observacion_sugerida"],
+            "✓" if row["MCL"] else "", _truncar_texto(observacion, 130),
         ])
     _fill_table_rows(_get_table(s6, SLIDE6["tabla"]), filas)
 
