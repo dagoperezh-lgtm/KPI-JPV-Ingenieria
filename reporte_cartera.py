@@ -132,8 +132,8 @@ def cargar_pipeline_desde_google_sheets(credenciales_sa, sheet_url=None, workshe
     return pd.DataFrame(hoja.get_all_records(head=PIPELINE_HEADER_ROW))
 
 
-def filtrar_pipeline(df_pipeline, corredoras=None, aseguradoras=None, asegurados=None):
-    """Filtra el Pipeline por Corredora / Compañía de seguros / Asegurado.
+def filtrar_pipeline(df_pipeline, corredoras=None, aseguradoras=None, asegurados=None, ajustadores=None):
+    """Filtra el Pipeline por Corredora / Compañía de seguros / Asegurado / Ajustador senior.
 
     Cada parámetro es una lista opcional de valores exactos (tal como aparecen
     en el archivo). Si una lista viene vacía o None, ese filtro no se aplica.
@@ -146,6 +146,8 @@ def filtrar_pipeline(df_pipeline, corredoras=None, aseguradoras=None, asegurados
         df = df[df["Compañía de seguros"].isin(aseguradoras)]
     if asegurados and "Asegurado" in df.columns:
         df = df[df["Asegurado"].isin(asegurados)]
+    if ajustadores and "Ajustador senior" in df.columns:
+        df = df[df["Ajustador senior"].isin(ajustadores)]
     return df
 
 
@@ -159,6 +161,11 @@ def sugerir_titulo_cartera(corredoras=None, aseguradoras=None, asegurados=None):
     if aseguradoras:
         partes.append(" · ".join(aseguradoras))
     return " · ".join(partes) if partes else "Cartera General"
+
+
+def sugerir_titulo_ajustador(ajustadores=None):
+    """Sugiere un título de portada a partir de los Ajustadores senior seleccionados."""
+    return " · ".join(ajustadores) if ajustadores else "Cartera General"
 
 
 def _limpiar_observacion(texto):

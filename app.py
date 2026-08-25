@@ -181,45 +181,127 @@ periodo_seleccionado = st.sidebar.selectbox("Seleccionar Periodo Final:", period
 st.title("📊 Panel de Gestión: Tiempos de Residencia Reales")
 st.markdown("Monitor de control basado exclusivamente en los registros de tiempo de tu sistema.")
 
-tab_reporte, tab_energia, tab_moviles, tab_tendencias = st.tabs([
-    "📑 Reporte Ejecutivo de Cartera (PPTX)", "⚡ WIP: Ingeniería y Energía", "🚜 WIP: Equipos Móviles", "📈 Cierres e Históricos"
+# --- Carga del Pipeline (compartida entre "Reporte de Cartera" y "Por Ajustador") ---
+st.markdown("#### 🔗 Pipeline (para los reportes PPTX)")
+
+df_pipeline = None
+conectado_google = "gcp_service_account" in st.secrets
+
+col_fuente, col_actualizar = st.columns([4, 1])
+with col_fuente:
+    if conectado_google:
+        st.caption("🔗 Pipeline conectado automáticamente desde Google Sheets.")
+    else:
+        st.caption("Conexión a Google Sheets no configurada todavía; sube el archivo manualmente.")
+with col_actualizar:
+    if conectado_google and st.button("🔄 Actualizar Pipeline", use_container_width=True, key="btn_actualizar_pipeline"):
+        cargar_pipeline_google_cacheado.clear()
+
+if conectado_google:
+    try:
+        df_pipeline = cargar_pipeline_google_cacheado()
+    except Exception as e:
+        st.error(
+            "No se pudo leer el Pipeline desde Google Sheets. Verifica que la hoja esté "
+            f"compartida como Lector con la cuenta de servicio. Detalle: {e}"
+        )
+
+if df_pipeline is None:
+    archivo_pipeline = st.file_uploader(
+        "Cargar Pipeline (Excel) — respaldo manual" if conectado_google else "Cargar Pipeline (Excel)",
+        type=["xlsx"], key="archivo_pipeline",
+    )
+    if archivo_pipeline is not None:
+        df_pipeline = reporte_cartera.cargar_pipeline(archivo_pipeline)
+
+st.divider()
+
+
+def renderizar_editor_y_pptx(df_filtrado, titulo_sugerido, titulo_key, key_prefix, titulo_label):
+    """Editor de la tabla de casos + generación del pptx. Compartido entre el
+    Reporte de Cartera (filtrado por Corredora/Aseguradora/Asegurado) y el
+    Reporte por Ajustador (filtrado por Ajustador senior): misma plantilla y
+    lógica, solo cambia cómo se filtró el Pipeline antes de llegar aquí."""
+    if df_filtrado.empty:
+        st.info("No hay casos que cumplan con los filtros seleccionados.")
+        return
+
+    col_t1, col_t2 = st.columns([2, 1])
+    with col_t1:
+        titulo_cartera = st.text_input(titulo_label, value=titulo_sugerido, key=titulo_key)
+    with col_t2:
+        fecha_corte_reporte = st.date_input("Fecha de corte del reporte", value=datetime.now().date(), key=f"{key_prefix}_fecha_corte")
+
+    tabla_base = reporte_cartera.preparar_tabla_casos(df_filtrado, fecha_corte_reporte)
+
+    st.markdown(f"**Cartera filtrada: {len(tabla_base)} casos activos.** "
+                "La probabilidad de cierre y la observación ya vienen del Pipeline; ajústalas si es necesario antes de generar el pptx.")
+
+    tabla_editada = st.data_editor(
+        tabla_base[["Caso", "Asegurado", "Nickname", "Divisa", "Perdida_bruta", "Dias", "Division", "MCL", "Prob", "Observacion", "Observacion_sugerida"]],
+        column_config={
+            "Perdida_bruta": st.column_config.NumberColumn("Pérdida bruta", format="%.0f", disabled=True),
+            "Dias": st.column_config.NumberColumn("Días", disabled=True),
+            "Division": st.column_config.TextColumn("División", disabled=True),
+            "MCL": st.column_config.CheckboxColumn("MCL", disabled=True),
+            "Caso": st.column_config.TextColumn("Caso", disabled=True),
+            "Asegurado": st.column_config.TextColumn("Asegurado", disabled=True),
+            "Divisa": st.column_config.TextColumn("Divisa", disabled=True),
+            "Prob": st.column_config.NumberColumn("Prob. cierre (%)", min_value=0, max_value=100, step=25),
+            "Observacion_sugerida": st.column_config.TextColumn("Observación original (referencia)", disabled=True),
+        },
+        num_rows="fixed",
+        use_container_width=True,
+        key=f"{key_prefix}_tabla_editada",
+        height=350,
+    )
+
+    st.markdown("#### Próximos pasos y focos de gestión (hasta 5)")
+    pasos = []
+    for i in range(5):
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            titulo = st.text_input(f"Título paso {i + 1}", key=f"{key_prefix}_paso_titulo_{i}")
+        with c2:
+            desc = st.text_input(f"Descripción paso {i + 1}", key=f"{key_prefix}_paso_desc_{i}")
+        if titulo.strip() or desc.strip():
+            pasos.append({"titulo": titulo, "desc": desc})
+
+    alerta_prioritaria = st.text_area(
+        "Alerta de atención prioritaria (slide 'Casos que requieren atención especial')",
+        key=f"{key_prefix}_alerta",
+        placeholder="Ej: Atención prioritaria: Caso XXXXX (Nickname · Prob. 0%) acumula USD > X M sin antecedentes.",
+    )
+
+    if st.button("🎯 Generar PPTX", use_container_width=True, key=f"{key_prefix}_btn_generar"):
+        pptx_bytes = reporte_cartera.generar_pptx(
+            fecha_corte_reporte,
+            titulo_cartera,
+            pd.DataFrame(tabla_editada),
+            pasos,
+            alerta_prioritaria,
+        )
+        nombre_archivo = "".join(c if c.isalnum() else "_" for c in titulo_cartera).strip("_") or "Cartera"
+        st.download_button(
+            label="⬇️ Descargar Estado_Cartera.pptx",
+            data=pptx_bytes,
+            file_name=f"Estado_Cartera_{nombre_archivo}_{fecha_corte_reporte.strftime('%d%m%y')}.pptx",
+            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            use_container_width=True,
+            key=f"{key_prefix}_btn_descargar",
+        )
+
+
+tab_reporte, tab_ajustador, tab_energia, tab_moviles, tab_tendencias = st.tabs([
+    "📑 Reporte Ejecutivo de Cartera (PPTX)", "👤 Reporte por Ajustador (PPTX)",
+    "⚡ WIP: Ingeniería y Energía", "🚜 WIP: Equipos Móviles", "📈 Cierres e Históricos"
 ])
 
 with tab_reporte:
     st.subheader("📑 Reporte Ejecutivo de Cartera (PPTX)")
 
-    df_pipeline = None
-    conectado_google = "gcp_service_account" in st.secrets
-
-    col_fuente, col_actualizar = st.columns([4, 1])
-    with col_fuente:
-        if conectado_google:
-            st.caption("🔗 Pipeline conectado automáticamente desde Google Sheets.")
-        else:
-            st.caption("Conexión a Google Sheets no configurada todavía; sube el archivo manualmente.")
-    with col_actualizar:
-        if conectado_google and st.button("🔄 Actualizar Pipeline", use_container_width=True, key="btn_actualizar_pipeline"):
-            cargar_pipeline_google_cacheado.clear()
-
-    if conectado_google:
-        try:
-            df_pipeline = cargar_pipeline_google_cacheado()
-        except Exception as e:
-            st.error(
-                "No se pudo leer el Pipeline desde Google Sheets. Verifica que la hoja esté "
-                f"compartida como Lector con la cuenta de servicio. Detalle: {e}"
-            )
-
     if df_pipeline is None:
-        archivo_pipeline = st.file_uploader(
-            "Cargar Pipeline (Excel) — respaldo manual" if conectado_google else "Cargar Pipeline (Excel)",
-            type=["xlsx"], key="archivo_pipeline",
-        )
-        if archivo_pipeline is not None:
-            df_pipeline = reporte_cartera.cargar_pipeline(archivo_pipeline)
-
-    if df_pipeline is None:
-        st.info("Conecta el Pipeline desde Google Sheets o sube el archivo para generar el reporte.")
+        st.info("Conecta el Pipeline (arriba) desde Google Sheets o sube el archivo para generar el reporte.")
     else:
 
         st.markdown("#### Panorama general del Pipeline (Top 5)")
@@ -264,77 +346,50 @@ with tab_reporte:
             df_pipeline, corredoras=filtro_corredoras, aseguradoras=filtro_aseguradoras, asegurados=filtro_asegurados
         )
 
-        if df_cartera_filtrada.empty:
-            st.info("No hay casos que cumplan con los filtros seleccionados.")
+        titulo_sugerido = reporte_cartera.sugerir_titulo_cartera(filtro_corredoras, filtro_aseguradoras, filtro_asegurados)
+        # La key incluye los filtros activos para que el sugerido se refresque cada vez que cambian,
+        # sin perder una edición manual mientras el usuario no toque los filtros.
+        titulo_key = "titulo_cartera__" + "|".join(sorted(filtro_corredoras + filtro_aseguradoras + filtro_asegurados))
+        renderizar_editor_y_pptx(
+            df_cartera_filtrada, titulo_sugerido, titulo_key, key_prefix="cartera",
+            titulo_label="Título de la cartera (portada, resumen y pie de página)",
+        )
+
+with tab_ajustador:
+    st.subheader("👤 Reporte de Cartera por Ajustador (PPTX)")
+    st.caption("Mismo reporte que 'Reporte Ejecutivo de Cartera', filtrado por Ajustador Senior — para ver el detalle de la carga de trabajo de cada ajustador.")
+
+    if df_pipeline is None:
+        st.info("Conecta el Pipeline (arriba) desde Google Sheets o sube el archivo para generar el reporte.")
+    elif "Ajustador senior" not in df_pipeline.columns:
+        st.warning("El Pipeline no tiene la columna 'Ajustador senior'.")
+    else:
+        carga_ajustador = df_pipeline["Ajustador senior"].dropna().value_counts().reset_index()
+        carga_ajustador.columns = ["Ajustador senior", "Casos"]
+
+        st.markdown("#### Carga de casos activos por Ajustador Senior")
+        fig_carga_aj = px.bar(
+            carga_ajustador.sort_values("Casos"), x="Casos", y="Ajustador senior", orientation="h",
+            text="Casos", color_discrete_sequence=["#8e44ad"],
+        )
+        fig_carga_aj.update_layout(yaxis_title=None, height=max(280, 28 * len(carga_ajustador)), margin=dict(l=0, r=10, t=10, b=10))
+        st.plotly_chart(fig_carga_aj, use_container_width=True)
+
+        st.divider()
+
+        opciones_ajustador = sorted(df_pipeline["Ajustador senior"].dropna().unique().tolist())
+        filtro_ajustadores = st.multiselect("Ajustador Senior", opciones_ajustador, key="filtro_ajustadores")
+
+        if not filtro_ajustadores:
+            st.info("Selecciona uno o más Ajustadores para generar su reporte de carga de trabajo.")
         else:
-            col_t1, col_t2 = st.columns([2, 1])
-            with col_t1:
-                titulo_sugerido = reporte_cartera.sugerir_titulo_cartera(filtro_corredoras, filtro_aseguradoras, filtro_asegurados)
-                # La key incluye los filtros activos para que el sugerido se refresque cada vez que cambian,
-                # sin perder una edición manual mientras el usuario no toque los filtros.
-                titulo_key = "titulo_cartera__" + "|".join(sorted(filtro_corredoras + filtro_aseguradoras + filtro_asegurados))
-                titulo_cartera = st.text_input("Título de la cartera (portada, resumen y pie de página)", value=titulo_sugerido, key=titulo_key)
-            with col_t2:
-                fecha_corte_reporte = st.date_input("Fecha de corte del reporte", value=datetime.now().date(), key="fecha_corte_reporte")
-
-            tabla_key = "cartera_tabla_editada"
-            tabla_base = reporte_cartera.preparar_tabla_casos(df_cartera_filtrada, fecha_corte_reporte)
-
-            st.markdown(f"**Cartera filtrada: {len(tabla_base)} casos activos.** "
-                        "La probabilidad de cierre y la observación ya vienen del Pipeline; ajústalas si es necesario antes de generar el pptx.")
-
-            tabla_editada = st.data_editor(
-                tabla_base[["Caso", "Asegurado", "Nickname", "Divisa", "Perdida_bruta", "Dias", "Division", "MCL", "Prob", "Observacion", "Observacion_sugerida"]],
-                column_config={
-                    "Perdida_bruta": st.column_config.NumberColumn("Pérdida bruta", format="%.0f", disabled=True),
-                    "Dias": st.column_config.NumberColumn("Días", disabled=True),
-                    "Division": st.column_config.TextColumn("División", disabled=True),
-                    "MCL": st.column_config.CheckboxColumn("MCL", disabled=True),
-                    "Caso": st.column_config.TextColumn("Caso", disabled=True),
-                    "Asegurado": st.column_config.TextColumn("Asegurado", disabled=True),
-                    "Divisa": st.column_config.TextColumn("Divisa", disabled=True),
-                    "Prob": st.column_config.NumberColumn("Prob. cierre (%)", min_value=0, max_value=100, step=25),
-                    "Observacion_sugerida": st.column_config.TextColumn("Observación original (referencia)", disabled=True),
-                },
-                num_rows="fixed",
-                use_container_width=True,
-                key=tabla_key,
-                height=350,
+            df_cartera_ajustador = reporte_cartera.filtrar_pipeline(df_pipeline, ajustadores=filtro_ajustadores)
+            titulo_sugerido_aj = reporte_cartera.sugerir_titulo_ajustador(filtro_ajustadores)
+            titulo_key_aj = "titulo_ajustador__" + "|".join(sorted(filtro_ajustadores))
+            renderizar_editor_y_pptx(
+                df_cartera_ajustador, titulo_sugerido_aj, titulo_key_aj, key_prefix="ajustador",
+                titulo_label="Título del reporte (portada, resumen y pie de página)",
             )
-
-            st.markdown("#### Próximos pasos y focos de gestión (hasta 5)")
-            pasos = []
-            for i in range(5):
-                c1, c2 = st.columns([1, 2])
-                with c1:
-                    titulo = st.text_input(f"Título paso {i + 1}", key=f"cartera_paso_titulo_{i}")
-                with c2:
-                    desc = st.text_input(f"Descripción paso {i + 1}", key=f"cartera_paso_desc_{i}")
-                if titulo.strip() or desc.strip():
-                    pasos.append({"titulo": titulo, "desc": desc})
-
-            alerta_prioritaria = st.text_area(
-                "Alerta de atención prioritaria (slide 'Casos que requieren atención especial')",
-                key="cartera_alerta",
-                placeholder="Ej: Atención prioritaria: Caso XXXXX (Nickname · Prob. 0%) acumula USD > X M sin antecedentes.",
-            )
-
-            if st.button("🎯 Generar PPTX de Cartera", use_container_width=True):
-                pptx_bytes = reporte_cartera.generar_pptx(
-                    fecha_corte_reporte,
-                    titulo_cartera,
-                    pd.DataFrame(tabla_editada),
-                    pasos,
-                    alerta_prioritaria,
-                )
-                nombre_archivo = "".join(c if c.isalnum() else "_" for c in titulo_cartera).strip("_") or "Cartera"
-                st.download_button(
-                    label="⬇️ Descargar Estado_Cartera.pptx",
-                    data=pptx_bytes,
-                    file_name=f"Estado_Cartera_{nombre_archivo}_{fecha_corte_reporte.strftime('%d%m%y')}.pptx",
-                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                    use_container_width=True,
-                )
 
 def renderizar_panel_area(df_area_abiertos, area_nombre, cols_dias):
     if df_area_abiertos.empty:
