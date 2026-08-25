@@ -65,6 +65,15 @@ SLIDE3 = dict(mcl_count=11, mcl_pct_line=12, mcl_sum_line=13,
 SLIDE4 = dict(tier100=12, tier75=18, tier50=24, tier0=30)
 SLIDE5 = dict(caso_mas_antiguo=9, promedio_cartera=12, promedio_cartera_label=13, casos_600=15, tabla=17)
 SLIDE6 = dict(intro=8, alerta=11, tabla=9)
+# Slide "Gestiones Iniciales" (penúltima): clon exacto de la slide 5, mismos
+# shape_id, pero con los 3 KPI y la tabla reutilizados para casos recientes.
+SLIDE_GESTIONES = dict(
+    titulo=5, subtitulo=6,
+    kpi1_valor=9, kpi1_label=10,
+    kpi2_valor=12, kpi2_label=13,
+    kpi3_valor=15, kpi3_label=16,
+    tabla=17,
+)
 SLIDE7 = dict(
     footer=32,
     pasos=[
@@ -425,8 +434,36 @@ def generar_pptx(fecha_corte, titulo_cartera, tabla, pasos, alerta_prioritaria):
         ])
     _fill_table_rows(_get_table(s6, SLIDE6["tabla"]), filas)
 
+    # --- Slide "Gestiones Iniciales" (penúltima): casos ingresados hace menos de 2 semanas ---
+    s_gestiones = prs.slides[6]
+    _set_shape_text(s_gestiones, SLIDE_GESTIONES["titulo"], "GESTIONES INICIALES")
+    _set_shape_text(s_gestiones, SLIDE_GESTIONES["subtitulo"], "Casos ingresados hace menos de 2 semanas")
+
+    recientes = tabla[tabla["Dias"] < 14].sort_values("Dias", ascending=False)
+    sin_gestion = recientes[
+        (recientes["Observacion"].astype(str).str.strip() == "")
+        & (recientes["Observacion_sugerida"].astype(str).str.strip() == "")
+    ]
+    dias_prom_recientes = round(recientes["Dias"].mean()) if len(recientes) else 0
+
+    _set_shape_text(s_gestiones, SLIDE_GESTIONES["kpi1_valor"], f"{len(recientes)} caso" + ("s" if len(recientes) != 1 else ""))
+    _set_shape_text(s_gestiones, SLIDE_GESTIONES["kpi1_label"], "Ingresados < 2 semanas")
+    _set_shape_text(s_gestiones, SLIDE_GESTIONES["kpi2_valor"], f"{len(sin_gestion)} caso" + ("s" if len(sin_gestion) != 1 else ""))
+    _set_shape_text(s_gestiones, SLIDE_GESTIONES["kpi2_label"], "Sin gestión inicial registrada")
+    _set_shape_text(s_gestiones, SLIDE_GESTIONES["kpi3_valor"], f"~{dias_prom_recientes} días")
+    _set_shape_text(s_gestiones, SLIDE_GESTIONES["kpi3_label"], "Antigüedad promedio del grupo")
+
+    filas = []
+    for i, (_, row) in enumerate(recientes.head(10).iterrows(), start=1):
+        observacion = row["Observacion"] or row["Observacion_sugerida"] or "Sin gestión registrada"
+        filas.append([
+            i, row["Caso"], row["Nickname"], row["Divisa"], row["Dias"],
+            f"{int(row['Prob'])}%", _truncar_texto(observacion, 100),
+        ])
+    _fill_table_rows(_get_table(s_gestiones, SLIDE_GESTIONES["tabla"]), filas)
+
     # --- Slide 7: Próximos pasos y focos de gestión ---
-    s7 = prs.slides[6]
+    s7 = prs.slides[7]
     for i, ids in enumerate(SLIDE7["pasos"]):
         paso = pasos[i] if i < len(pasos) else {"titulo": "", "desc": ""}
         _set_shape_text(s7, ids["titulo"], paso.get("titulo", ""))
