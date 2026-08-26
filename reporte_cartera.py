@@ -36,10 +36,6 @@ PIPELINE_HEADER_ROW = 2
 
 MCL_UF = 5000
 MCL_USD = 200000
-# Tipo de cambio implícito en los umbrales MCL, usado solo para poder sumar
-# pérdida bruta en UF y en USD como un único valor comparable (p.ej. para
-# dimensionar barras). No es un valor de mercado, es una aproximación.
-USD_POR_UF = MCL_USD / MCL_UF
 
 # La columna "Indicación Probabilidad" del Pipeline usa estas 4 categorías.
 INDICACION_A_PROB = {
@@ -272,22 +268,11 @@ def calcular_kpis(tabla):
     otros_uf = float(otros.loc[otros["Divisa"] == "UF", "Perdida_bruta"].sum())
     otros_usd = float(otros.loc[otros["Divisa"] == "USD", "Perdida_bruta"].sum())
 
-    def _perdida_uf_equivalente(sub_tabla):
-        en_uf = sub_tabla.loc[sub_tabla["Divisa"] == "UF", "Perdida_bruta"].sum()
-        en_usd = sub_tabla.loc[sub_tabla["Divisa"] == "USD", "Perdida_bruta"].sum()
-        return float(en_uf + en_usd / USD_POR_UF)
-
     top_aseg = tabla.groupby("Asegurado").size().sort_values(ascending=False)
     top4 = list(top_aseg.head(4).items())
-    # El orden y el Top 4 los define la cantidad de casos; la pérdida acumulada
-    # (en UF equivalente) se calcula aparte, solo para dimensionar la barra.
-    top4_perdida = [_perdida_uf_equivalente(tabla[tabla["Asegurado"] == nombre]) for nombre, _ in top4]
     while len(top4) < 4:
         top4.append(("—", 0))
-        top4_perdida.append(0.0)
     aseg_otros = int(top_aseg.iloc[4:].sum())
-    nombres_top4 = [nombre for nombre, _ in top4 if nombre != "—"]
-    aseg_otros_perdida = _perdida_uf_equivalente(tabla[~tabla["Asegurado"].isin(nombres_top4)])
 
     dias_max = int(tabla["Dias"].max()) if total else 0
     dias_prom = round(tabla["Dias"].mean()) if total else 0
@@ -308,7 +293,7 @@ def calcular_kpis(tabla):
         mcl_count=mcl_count, otros_count=otros_count,
         mcl_pct=mcl_pct, otros_pct=otros_pct,
         mcl_uf=mcl_uf, mcl_usd=mcl_usd, otros_uf=otros_uf, otros_usd=otros_usd,
-        top4=top4, aseg_otros=aseg_otros, top4_perdida=top4_perdida, aseg_otros_perdida=aseg_otros_perdida,
+        top4=top4, aseg_otros=aseg_otros,
         dias_max=dias_max, dias_prom=dias_prom, dias_600=dias_600,
         tier_counts=tier_counts,
     )
@@ -396,33 +381,31 @@ def generar_pptx(fecha_corte, titulo_cartera, tabla, pasos, alerta_prioritaria):
     barra_ids = ["aseg1_barra", "aseg2_barra", "aseg3_barra", "aseg4_barra"]
     count_ids = ["aseg1_count", "aseg2_count", "aseg3_count", "aseg4_count"]
 
-    # El orden (Top 4 + Otros) lo define la cantidad de casos (kpis["top4"] /
-    # aseg_otros); el largo de la barra representa la pérdida acumulada de
-    # cada uno (kpis["top4_perdida"] / aseg_otros_perdida, en UF equivalente).
+    # El orden (Top 4 + Otros) y el largo de la barra los define la misma
+    # cantidad de casos que muestra el número — evita sugerir un monto de
+    # pérdida/pago sobre casos cuya liquidación todavía no termina.
     BARRA_IZQUIERDA = 2926080
     BARRA_ANCHO_MAX = 5120640
     BARRA_ANCHO_MIN = 91440
     BARRA_ESPACIO_TEXTO = 91440
-    max_perdida = max(kpis["top4_perdida"] + [kpis["aseg_otros_perdida"]], default=0)
+    max_count = max([c for _, c in kpis["top4"]] + [kpis["aseg_otros"]], default=0)
 
-    def _ancho_barra(perdida):
-        if max_perdida <= 0:
+    def _ancho_barra(valor_count):
+        if max_count <= 0:
             return BARRA_ANCHO_MIN
-        return max(BARRA_ANCHO_MIN, round(perdida / max_perdida * BARRA_ANCHO_MAX))
+        return max(BARRA_ANCHO_MIN, round(valor_count / max_count * BARRA_ANCHO_MAX))
 
-    def _dibujar_barra(barra_id, count_id, valor_count, perdida):
-        ancho = _ancho_barra(perdida)
+    def _dibujar_barra(barra_id, count_id, valor_count):
+        ancho = _ancho_barra(valor_count)
         _get_shape(s3, SLIDE3[barra_id]).width = ancho
         shape_count = _get_shape(s3, SLIDE3[count_id])
         shape_count.left = BARRA_IZQUIERDA + ancho + BARRA_ESPACIO_TEXTO
         _set_text(shape_count.text_frame, str(valor_count))
 
-    for (nombre, count), nombre_id, barra_id, count_id, perdida in zip(
-        kpis["top4"], nombre_ids, barra_ids, count_ids, kpis["top4_perdida"]
-    ):
+    for (nombre, count), nombre_id, barra_id, count_id in zip(kpis["top4"], nombre_ids, barra_ids, count_ids):
         _set_shape_text(s3, SLIDE3[nombre_id], str(nombre))
-        _dibujar_barra(barra_id, count_id, count, perdida)
-    _dibujar_barra("aseg_otros_barra", "aseg_otros_count", kpis["aseg_otros"], kpis["aseg_otros_perdida"])
+        _dibujar_barra(barra_id, count_id, count)
+    _dibujar_barra("aseg_otros_barra", "aseg_otros_count", kpis["aseg_otros"])
 
     # --- Slide 4: Probabilidad de cierre ---
     s4 = prs.slides[3]
