@@ -238,13 +238,14 @@ def renderizar_editor_y_pptx(df_filtrado, titulo_sugerido, titulo_key, key_prefi
                 "La probabilidad de cierre y la observación ya vienen del Pipeline; ajústalas si es necesario antes de generar el pptx.")
 
     tabla_editada = st.data_editor(
-        tabla_base[["Caso", "Asegurado", "Nickname", "Divisa", "Perdida_bruta", "Dias", "Division", "MCL", "Prob", "Observacion", "Observacion_sugerida"]],
+        tabla_base[["Caso", "Numero_Siniestro", "Asegurado", "Nickname", "Divisa", "Perdida_bruta", "Dias", "Division", "MCL", "Prob", "Observacion", "Observacion_sugerida"]],
         column_config={
             "Perdida_bruta": st.column_config.NumberColumn("Pérdida bruta", format="%.0f", disabled=True),
             "Dias": st.column_config.NumberColumn("Días", disabled=True),
             "Division": st.column_config.TextColumn("División", disabled=True),
             "MCL": st.column_config.CheckboxColumn("MCL", disabled=True),
             "Caso": st.column_config.TextColumn("Caso", disabled=True),
+            "Numero_Siniestro": st.column_config.TextColumn("N° Siniestro", disabled=True),
             "Asegurado": st.column_config.TextColumn("Asegurado", disabled=True),
             "Divisa": st.column_config.TextColumn("Divisa", disabled=True),
             "Prob": st.column_config.NumberColumn("Prob. cierre (%)", min_value=0, max_value=100, step=25),

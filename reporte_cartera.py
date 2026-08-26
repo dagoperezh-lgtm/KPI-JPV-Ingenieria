@@ -102,6 +102,20 @@ def fmt_fecha_larga(fecha):
     return f"{fecha.day} de {MESES_ES[fecha.month]} de {fecha.year}"
 
 
+def _fila_siniestro_nickname(siniestro, nickname, max_chars=70):
+    """Combina el N° de siniestro con el nickname para las columnas 'Siniestro
+    / Nickname' de las tablas (slides 5, 6 y 'Gestiones Iniciales'). El N° de
+    siniestro nunca se trunca (es un identificador); el nickname se recorta
+    con el espacio restante para no salirse del ancho de la columna."""
+    siniestro = str(siniestro).strip()
+    nickname = str(nickname).strip()
+    if not siniestro or siniestro.lower() in ("nan", "none"):
+        return _truncar_texto(nickname, max_chars)
+    prefijo = f"Sin. {siniestro} — "
+    espacio_nickname = max(15, max_chars - len(prefijo))
+    return prefijo + _truncar_texto(nickname, espacio_nickname)
+
+
 def _truncar_texto(texto, max_chars):
     """Recorta observaciones largas para que la fila no crezca más de lo que
     permite la plantilla (si no, las últimas filas de la tabla quedan fuera
@@ -196,6 +210,7 @@ def preparar_tabla_casos(df_pipeline_filtrado, fecha_corte):
         ("Perdida bruta (en moneda del caso)", 0),
         ("Asegurado", "Sin asegurado"),
         ("Nickname", ""),
+        ("Número de siniestro", ""),
         ("Observaciones", ""),
         ("Contenido último movimiento", ""),
         ("División", "Sin División"),
@@ -216,6 +231,12 @@ def preparar_tabla_casos(df_pipeline_filtrado, fecha_corte):
     asegurado = df["Asegurado"].astype(str).str.strip()
     nickname_default = nickname.where(nickname.ne("") & nickname.ne("None") & nickname.ne("nan"), asegurado)
 
+    # Puede llegar como número (float, con ".0" al final) si Excel/Sheets lo
+    # detectó como columna numérica; se normaliza siempre a texto limpio.
+    siniestro = df["Número de siniestro"].astype(str).str.strip()
+    siniestro = siniestro.str.replace(r"\.0$", "", regex=True)
+    siniestro = siniestro.where(~siniestro.str.lower().isin(["nan", "none"]), "")
+
     indicacion = df.get("Indicación Probabilidad", pd.Series("", index=df.index)).astype(str).str.strip().str.lower()
     prob_indicacion = indicacion.map(INDICACION_A_PROB)
     prob_numerica = pd.to_numeric(df.get("Probabilidad cierre 2026", pd.Series(1.0, index=df.index)), errors="coerce") * 100
@@ -227,6 +248,7 @@ def preparar_tabla_casos(df_pipeline_filtrado, fecha_corte):
 
     tabla = pd.DataFrame({
         "Caso": df["Número de caso"].astype(str),
+        "Numero_Siniestro": siniestro,
         "Asegurado": asegurado,
         "Nickname": nickname_default,
         "Divisa": divisa,
@@ -438,7 +460,7 @@ def generar_pptx(fecha_corte, titulo_cartera, tabla, pasos, alerta_prioritaria):
     for i, (_, row) in enumerate(top10_antiguos.iterrows(), start=1):
         observacion = row["Observacion"] or row["Observacion_sugerida"]
         filas.append([
-            i, row["Caso"], row["Nickname"], row["Divisa"], row["Dias"],
+            i, row["Caso"], _fila_siniestro_nickname(row["Numero_Siniestro"], row["Nickname"]), row["Divisa"], row["Dias"],
             f"{int(row['Prob'])}%", _truncar_texto(observacion, 100),
         ])
     _fill_table_rows(_get_table(s5, SLIDE5["tabla"]), filas)
@@ -457,7 +479,7 @@ def generar_pptx(fecha_corte, titulo_cartera, tabla, pasos, alerta_prioritaria):
     for _, row in atencion.iterrows():
         observacion = row["Observacion"] or row["Observacion_sugerida"]
         filas.append([
-            row["Caso"], row["Nickname"], f"{int(row['Prob'])}%", row["Divisa"],
+            row["Caso"], _fila_siniestro_nickname(row["Numero_Siniestro"], row["Nickname"]), f"{int(row['Prob'])}%", row["Divisa"],
             "✓" if row["MCL"] else "", _truncar_texto(observacion, 130),
         ])
     _fill_table_rows(_get_table(s6, SLIDE6["tabla"]), filas)
@@ -485,7 +507,7 @@ def generar_pptx(fecha_corte, titulo_cartera, tabla, pasos, alerta_prioritaria):
     for i, (_, row) in enumerate(recientes.head(10).iterrows(), start=1):
         observacion = row["Observacion"] or row["Observacion_sugerida"] or "Sin gestión registrada"
         filas.append([
-            i, row["Caso"], row["Nickname"], row["Divisa"], row["Dias"],
+            i, row["Caso"], _fila_siniestro_nickname(row["Numero_Siniestro"], row["Nickname"]), row["Divisa"], row["Dias"],
             f"{int(row['Prob'])}%", _truncar_texto(observacion, 100),
         ])
     _fill_table_rows(_get_table(s_gestiones, SLIDE_GESTIONES["tabla"]), filas)
