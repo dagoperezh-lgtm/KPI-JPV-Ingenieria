@@ -7,6 +7,7 @@ preservando el formato original (fuentes, colores, posiciones) del template.
 Sirve para cualquier corte de cartera: por Corredora, Compañía de seguros
 (Aseguradora), Asegurado, o una combinación de estos filtros.
 """
+import copy
 import io
 import os
 import re
@@ -15,6 +16,9 @@ from datetime import datetime
 import pandas as pd
 from pptx import Presentation
 from pptx.chart.data import CategoryChartData
+from pptx.dml.color import RGBColor
+from pptx.oxml.ns import qn
+from pptx.util import Inches, Pt
 
 try:
     import gspread
@@ -359,6 +363,120 @@ def _fill_table_rows(tabla_pptx, filas):
             _set_text(tabla_pptx.cell(i + 1, c).text_frame, str(valor))
 
 
+# Mismo cuadro que ocupaba la tabla original de 10 filas en la slide de
+# Tiempos de Residencia (assets/plantilla_estado_cartera.pptx, shape_id 17).
+_TABLA_DETALLE_LEFT = 256032
+_TABLA_DETALLE_TOP = 1622909
+_TABLA_DETALLE_WIDTH = 7644384
+_TABLA_DETALLE_HEIGHT = 3323995
+_TABLA_DETALLE_FILAS_MAX = 20
+_TABLA_DETALLE_COLS = [
+    # (encabezado, ancho, max_chars para truncar el valor)
+    ("#", Inches(0.35), 3),
+    ("Caso", Inches(0.75), 12),
+    ("Siniestro", Inches(1.0), 18),
+    ("Nickname / Asegurado", Inches(4.76), 95),
+    ("Divisa", Inches(0.5), 6),
+    ("Días", Inches(0.5), 6),
+    ("Prob.", Inches(0.5), 6),
+]
+
+
+def _quitar_shape(slide, shape_id):
+    shape = _get_shape(slide, shape_id)
+    shape._element.getparent().remove(shape._element)
+
+
+def _construir_tabla_detalle(slide, filas):
+    """Tabla más densa que las demás del reporte (hasta 20 filas de datos en
+    el mismo espacio donde las otras tablas ponen 10), pensada solo para
+    listar la cartera completa. Se construye desde cero (no es un clon de
+    ninguna tabla existente) para poder controlar el alto de fila y el
+    tamaño de fuente sin afectar al resto de las slides."""
+    n_filas = _TABLA_DETALLE_FILAS_MAX + 1
+    n_cols = len(_TABLA_DETALLE_COLS)
+    graphic_frame = slide.shapes.add_table(
+        n_filas, n_cols, _TABLA_DETALLE_LEFT, _TABLA_DETALLE_TOP, _TABLA_DETALLE_WIDTH, _TABLA_DETALLE_HEIGHT
+    )
+    tabla_pptx = graphic_frame.table
+    tabla_pptx.horz_banding = False
+
+    for col, (_, ancho, _) in zip(tabla_pptx.columns, _TABLA_DETALLE_COLS):
+        col.width = ancho
+
+    alto_header = Inches(0.28)
+    alto_dato = Inches((_TABLA_DETALLE_HEIGHT / 914400 - 0.28) / _TABLA_DETALLE_FILAS_MAX)
+    tabla_pptx.rows[0].height = alto_header
+    for fila in list(tabla_pptx.rows)[1:]:
+        fila.height = alto_dato
+
+    for c, (encabezado, _, _) in enumerate(_TABLA_DETALLE_COLS):
+        cell = tabla_pptx.cell(0, c)
+        _set_text(cell.text_frame, encabezado)
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = RGBColor(0x0D, 0x1F, 0x38)
+        cell.margin_left, cell.margin_right = Pt(3), Pt(3)
+        cell.margin_top, cell.margin_bottom = Pt(1), Pt(1)
+        run = cell.text_frame.paragraphs[0].runs[0]
+        run.font.size, run.font.bold = Pt(8), True
+        run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+
+    for i in range(_TABLA_DETALLE_FILAS_MAX):
+        for c, (_, _, max_chars) in enumerate(_TABLA_DETALLE_COLS):
+            valor = _truncar_texto(filas[i][c], max_chars) if i < len(filas) else ""
+            cell = tabla_pptx.cell(i + 1, c)
+            cell.fill.background()
+            cell.margin_left, cell.margin_right = Pt(3), Pt(3)
+            cell.margin_top, cell.margin_bottom = Pt(0.5), Pt(0.5)
+            cell.text_frame.word_wrap = False
+            _set_text(cell.text_frame, valor)
+            if cell.text_frame.paragraphs[0].runs:
+                cell.text_frame.paragraphs[0].runs[0].font.size = Pt(6.5)
+    return tabla_pptx
+
+
+def _duplicar_slide(prs, index):
+    """Clona la slide en `index` (mismo layout, shapes, tabla e imagen) y la
+    agrega al final de la presentación. Los shape_id quedan idénticos a los
+    de la slide original, así que se puede rellenar con el mismo mapa de
+    shape_id (p.ej. SLIDE_GESTIONES) sin importar cuántas copias se hagan."""
+    source = prs.slides[index]
+    dest = prs.slides.add_slide(source.slide_layout)
+    for shp in list(dest.shapes):
+        shp._element.getparent().remove(shp._element)
+    rid_map = {}
+    for shape in source.shapes:
+        el = copy.deepcopy(shape._element)
+        for blip in el.findall(".//" + qn("a:blip")):
+            old_rid = blip.get(qn("r:embed"))
+            if old_rid:
+                if old_rid not in rid_map:
+                    image_part = source.part.rels[old_rid].target_part
+                    rid_map[old_rid] = dest.part.relate_to(image_part, source.part.rels[old_rid].reltype)
+                blip.set(qn("r:embed"), rid_map[old_rid])
+        dest.shapes._spTree.append(el)
+    return dest
+
+
+def _indice_por_slide_id(prs, slide_id):
+    for i, s in enumerate(prs.slides):
+        if s.slide_id == slide_id:
+            return i
+    raise ValueError(f"slide_id {slide_id} no encontrado")
+
+
+def _duplicar_slide_antes_de(prs, index_fuente, slide_id_referencia):
+    """Clona la slide `index_fuente` y la inserta justo antes de la slide con
+    `slide_id_referencia` (recalculado en cada llamada, así que insertar
+    varias veces seguidas las deja en el orden correcto, una tras otra)."""
+    nueva = _duplicar_slide(prs, index_fuente)
+    xml_slides = prs.slides._sldIdLst
+    elemento = list(xml_slides)[-1]  # la recién agregada, siempre queda última
+    xml_slides.remove(elemento)
+    xml_slides.insert(_indice_por_slide_id(prs, slide_id_referencia), elemento)
+    return nueva
+
+
 def generar_pptx(fecha_corte, titulo_cartera, tabla, pasos, alerta_prioritaria):
     """
     fecha_corte: datetime.date/datetime
@@ -514,6 +632,40 @@ def generar_pptx(fecha_corte, titulo_cartera, tabla, pasos, alerta_prioritaria):
 
     # --- Slide 7: Próximos pasos y focos de gestión ---
     s7 = prs.slides[7]
+
+    # --- Slides "Detalle Completo de Cartera" (una o más según la cantidad de
+    # casos): se insertan justo antes de "Próximos pasos", clonando el
+    # encabezado/KPIs de Tiempos de Residencia pero con una tabla propia más
+    # densa (hasta 20 casos por página en vez de 10). ---
+    s7_id = s7.slide_id
+    detalle = tabla.sort_values("Dias", ascending=False).reset_index(drop=True)
+    paginas_detalle = [
+        detalle.iloc[i:i + _TABLA_DETALLE_FILAS_MAX] for i in range(0, len(detalle), _TABLA_DETALLE_FILAS_MAX)
+    ]
+
+    for num_pagina, pagina in enumerate(paginas_detalle, start=1):
+        s_detalle = _duplicar_slide_antes_de(prs, 4, s7_id)
+        _quitar_shape(s_detalle, SLIDE_GESTIONES["tabla"])
+        _set_shape_text(s_detalle, SLIDE_GESTIONES["titulo"], "DETALLE COMPLETO DE CARTERA")
+        _set_shape_text(
+            s_detalle, SLIDE_GESTIONES["subtitulo"],
+            f"Página {num_pagina} de {len(paginas_detalle)}  ·  {len(detalle)} casos",
+        )
+        _set_shape_text(s_detalle, SLIDE_GESTIONES["kpi1_valor"], f"{len(detalle)} caso" + ("s" if len(detalle) != 1 else ""))
+        _set_shape_text(s_detalle, SLIDE_GESTIONES["kpi1_label"], "Total cartera filtrada")
+        _set_shape_text(s_detalle, SLIDE_GESTIONES["kpi2_valor"], f"{num_pagina} / {len(paginas_detalle)}")
+        _set_shape_text(s_detalle, SLIDE_GESTIONES["kpi2_label"], "Página")
+        _set_shape_text(s_detalle, SLIDE_GESTIONES["kpi3_valor"], f"{fmt_uf(kpis['uf_total'])}  +  {fmt_usd_m(kpis['usd_total'])}")
+        _set_shape_text(s_detalle, SLIDE_GESTIONES["kpi3_label"], "Exposición total (UF + USD)")
+
+        filas = []
+        inicio = (num_pagina - 1) * _TABLA_DETALLE_FILAS_MAX + 1
+        for i, (_, row) in enumerate(pagina.iterrows(), start=inicio):
+            filas.append([
+                i, row["Caso"], row["Numero_Siniestro"], row["Nickname"], row["Divisa"], row["Dias"], f"{int(row['Prob'])}%",
+            ])
+        _construir_tabla_detalle(s_detalle, filas)
+
     for i, ids in enumerate(SLIDE7["pasos"]):
         paso = pasos[i] if i < len(pasos) else {"titulo": "", "desc": ""}
         _set_shape_text(s7, ids["titulo"], paso.get("titulo", ""))
