@@ -9,6 +9,8 @@ from docx import Document
 from docx.shared import Inches
 import matplotlib.pyplot as plt
 import reporte_cartera
+import ficha_caso
+from tablero_datos import parsear_fecha_flexible
 
 # --- SECCIÓN 1: CONFIGURACIÓN Y MOTOR DE CARGA ---
 st.set_page_config(page_title="Dashboard de Gestión: Procesos y Tendencias", layout="wide", page_icon="⚙️")
@@ -66,10 +68,55 @@ def buscar_indice_columna(columnas, palabras_clave):
                 return i
     return 0
 
-st.sidebar.title("Configuración y Carga")
-archivo_subido = st.sidebar.file_uploader("Cargar Reporte de Casos (CSV/Excel)", type=["csv", "xlsx"])
+def _google_configurado():
+    """`"x" in st.secrets` lanza StreamlitSecretNotFoundError si no existe
+    ningún secrets.toml (p.ej. antes de configurar los secretos en un deploy
+    nuevo); esto evita que tumbe toda la app."""
+    try:
+        return "gcp_service_account" in st.secrets
+    except Exception:
+        return False
 
-if archivo_subido is not None:
+@st.cache_data(ttl=300, show_spinner="Descargando Base Maestra desde Google Sheets...")
+def cargar_base_maestra_google_cacheado():
+    df = reporte_cartera.cargar_hoja_desde_google_sheets(
+        dict(st.secrets["gcp_service_account"]), "Base_Maestra", header_row=2
+    )
+    return df.rename(columns={
+        "Número de caso": "ID_Caso",
+        "División": "Area_Negocio",
+        "Ajustador senior": "Liquidador",
+        "Estado": "Estado_Actual",
+        "Sub estado": "Subestado_Actual",
+        "Creado en": "Fecha_Ingreso",
+        "Fecha de cierre": "Fecha_Cierre",
+    })
+
+st.sidebar.title("Configuración y Carga")
+
+df_raw = None
+conectado_google_maestra = _google_configurado()
+
+if conectado_google_maestra:
+    col_bm1, col_bm2 = st.sidebar.columns([3, 1])
+    with col_bm1:
+        st.caption("🔗 Base Maestra conectada desde Google Sheets.")
+    with col_bm2:
+        if st.button("🔄", key="btn_actualizar_base_maestra", help="Actualizar Base Maestra"):
+            cargar_base_maestra_google_cacheado.clear()
+    try:
+        df_raw = cargar_base_maestra_google_cacheado()
+    except Exception as e:
+        st.sidebar.error(f"No se pudo leer la Base Maestra desde Google Sheets: {e}")
+
+archivo_subido = st.sidebar.file_uploader(
+    "Cargar Reporte de Casos (CSV/Excel) — respaldo manual" if conectado_google_maestra else "Cargar Reporte de Casos (CSV/Excel)",
+    type=["csv", "xlsx"],
+)
+
+if df_raw is not None:
+    pass
+elif archivo_subido is not None:
     try:
         filas_saltar = st.sidebar.number_input("Filas a saltar (Encabezado desfasado)", min_value=0, max_value=20, value=5)
         
@@ -143,9 +190,10 @@ def procesar_datos_integrales(df):
         # FILTRO: Eliminar errores lógicos (outliers de > 1500 días)
         df = df[df[c] < 1500]
 
-    # Transformación de Fechas Clave
-    df['Fecha_Ingreso'] = pd.to_datetime(df['Fecha_Ingreso'], errors='coerce')
-    df['Fecha_Cierre'] = pd.to_datetime(df['Fecha_Cierre'], errors='coerce')
+    # Transformación de Fechas Clave (acepta texto normal o número de serie de
+    # Excel, como llega 'Fecha de cierre' en la Base Maestra de Google Sheets)
+    df['Fecha_Ingreso'] = df['Fecha_Ingreso'].apply(parsear_fecha_flexible)
+    df['Fecha_Cierre'] = df['Fecha_Cierre'].apply(parsear_fecha_flexible)
     
     df['Es_Abierto'] = ~df['Estado_Actual'].str.contains('CERRADO') & df['Fecha_Cierre'].isna()
     
@@ -185,7 +233,7 @@ st.markdown("Monitor de control basado exclusivamente en los registros de tiempo
 st.markdown("#### 🔗 Pipeline (para los reportes PPTX)")
 
 df_pipeline = None
-conectado_google = "gcp_service_account" in st.secrets
+conectado_google = _google_configurado()
 
 col_fuente, col_actualizar = st.columns([4, 1])
 with col_fuente:
@@ -293,9 +341,10 @@ def renderizar_editor_y_pptx(df_filtrado, titulo_sugerido, titulo_key, key_prefi
         )
 
 
-tab_reporte, tab_ajustador, tab_energia, tab_moviles, tab_tendencias = st.tabs([
+tab_reporte, tab_ajustador, tab_energia, tab_moviles, tab_tendencias, tab_ficha = st.tabs([
     "📑 Reporte Ejecutivo de Cartera (PPTX)", "👤 Reporte por Ajustador (PPTX)",
-    "⚡ WIP: Ingeniería y Energía", "🚜 WIP: Equipos Móviles", "📈 Cierres e Históricos"
+    "⚡ WIP: Ingeniería y Energía", "🚜 WIP: Equipos Móviles", "📈 Cierres e Históricos",
+    "🔎 Ficha de Caso (PPTX)",
 ])
 
 with tab_reporte:
@@ -457,6 +506,67 @@ with tab_tendencias:
         st.plotly_chart(fig_vol, use_container_width=True)
     else:
         st.info("No hay casos cerrados con fechas válidas para mostrar tendencias históricas.")
+
+with tab_ficha:
+    st.subheader("🔎 Ficha de Caso Individual")
+    st.caption("Busca un caso por N° de Caso JPV o por texto libre en el Nickname para generar su ficha (pptx de 3 slides: resumen, registro fotográfico y gestiones, estas dos últimas para completar a mano).")
+
+    if df_master.empty or "ID_Caso" not in df_master.columns:
+        st.info("No hay datos cargados para buscar un caso.")
+    else:
+        col_b1, col_b2 = st.columns(2)
+        with col_b1:
+            opciones_caso = sorted(df_master["ID_Caso"].dropna().astype(str).unique().tolist())
+            caso_directo = st.selectbox("Caso JPV", ["(todos)"] + opciones_caso, key="ficha_caso_directo")
+        with col_b2:
+            busqueda_nickname = st.text_input("Buscar por Nickname (texto libre)", key="ficha_busqueda_nickname")
+
+        candidatos = df_master.copy()
+        candidatos["ID_Caso"] = candidatos["ID_Caso"].astype(str)
+        if caso_directo != "(todos)":
+            candidatos = candidatos[candidatos["ID_Caso"] == caso_directo]
+        if busqueda_nickname.strip() and "Nickname" in candidatos.columns:
+            candidatos = candidatos[candidatos["Nickname"].astype(str).str.contains(busqueda_nickname.strip(), case=False, na=False)]
+
+        if candidatos.empty:
+            st.info("No se encontraron casos con esos criterios.")
+        else:
+            if len(candidatos) > 1:
+                nicknames = candidatos["Nickname"].astype(str) if "Nickname" in candidatos.columns else ""
+                etiquetas = (candidatos["ID_Caso"] + " — " + nicknames).tolist()
+                elegido = st.selectbox(f"Se encontraron {len(candidatos)} casos, elige uno:", etiquetas, key="ficha_desambiguar")
+                fila = candidatos.iloc[etiquetas.index(elegido)]
+            else:
+                fila = candidatos.iloc[0]
+
+            st.divider()
+            st.markdown(f"### {fila.get('Nickname') or fila.get('Asegurado') or fila.get('ID_Caso')}")
+            divisa_fila = str(fila.get("Divisa") or "").strip()
+            col_r1, col_r2 = st.columns(2)
+            with col_r1:
+                st.markdown(f"**Asegurado:** {fila.get('Asegurado', '—')}")
+                st.markdown(f"**N° Siniestro:** {fila.get('Número de siniestro', '—')}")
+                st.markdown(f"**Caso JPV:** {fila.get('ID_Caso', '—')}")
+                st.markdown(f"**Estado:** {fila.get('Estado_Actual', '—')}")
+                st.markdown(f"**Monto asegurado:** {fila.get('Monto asegurado (en moneda del caso)', '—')} {divisa_fila}")
+            with col_r2:
+                st.markdown(f"**Pérdida bruta:** {fila.get('Perdida bruta (en moneda del caso)', '—')} {divisa_fila}")
+                st.markdown(f"**Fecha de ocurrencia:** {fila.get('Fecha de ocurrencia', '—')}")
+                st.markdown(f"**Fecha de denuncio:** {fila.get('Fecha de denuncio', '—')}")
+                st.markdown(f"**Fecha de asignación:** {fila.get('Fecha de asignación', '—')}")
+                st.markdown(f"**Días desde asignación:** {fila.get('Días desde asignación', '—')}")
+
+            if st.button("🎯 Generar Ficha de Caso (PPTX)", use_container_width=True, key="btn_generar_ficha"):
+                pptx_bytes = ficha_caso.generar_ficha_pptx(fila)
+                nombre_archivo = "".join(c if c.isalnum() else "_" for c in str(fila.get("ID_Caso", ""))).strip("_") or "Caso"
+                st.download_button(
+                    label="⬇️ Descargar Ficha_Caso.pptx",
+                    data=pptx_bytes,
+                    file_name=f"Ficha_Caso_{nombre_archivo}.pptx",
+                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    use_container_width=True,
+                    key="btn_descargar_ficha",
+                )
 
 # --- SECCIÓN 4: MOTOR DE REPORTES EXPORTABLES (EXCEL Y WORD) ---
 st.divider()

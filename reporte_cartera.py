@@ -138,16 +138,7 @@ def cargar_pipeline(archivo, sheet_name=None):
     return pd.read_excel(archivo, sheet_name=hoja)
 
 
-def cargar_pipeline_desde_google_sheets(credenciales_sa, sheet_url=None, worksheet_name=None):
-    """Descarga el Pipeline directamente desde Google Sheets usando una cuenta
-    de servicio (st.secrets["gcp_service_account"]). No requiere que la hoja
-    esté compartida públicamente: basta con compartirla como Lector con el
-    email de la cuenta de servicio.
-
-    credenciales_sa: dict con el JSON de la cuenta de servicio.
-    sheet_url: enlace del Google Sheet (por defecto PIPELINE_SHEET_URL).
-    worksheet_name: nombre de la pestaña a leer (por defecto PIPELINE_WORKSHEET_NAME).
-    """
+def _cliente_google_sheets(credenciales_sa):
     if gspread is None:
         raise RuntimeError("Faltan las librerías 'gspread' y 'google-auth' (revisa requirements.txt).")
     scope = [
@@ -155,10 +146,36 @@ def cargar_pipeline_desde_google_sheets(credenciales_sa, sheet_url=None, workshe
         "https://www.googleapis.com/auth/drive.readonly",
     ]
     creds = Credentials.from_service_account_info(credenciales_sa, scopes=scope)
-    client = gspread.authorize(creds)
+    return gspread.authorize(creds)
+
+
+def cargar_hoja_desde_google_sheets(credenciales_sa, worksheet_name, header_row=1, sheet_url=None):
+    """Descarga cualquier pestaña del Google Sheet de OpsControl (Pipeline_Backup,
+    Base_Maestra, etc.) usando una cuenta de servicio (st.secrets["gcp_service_account"]).
+    No requiere que la hoja esté compartida públicamente: basta con compartirla
+    como Lector con el email de la cuenta de servicio.
+
+    credenciales_sa: dict con el JSON de la cuenta de servicio.
+    worksheet_name: nombre de la pestaña a leer.
+    header_row: fila donde están los encabezados reales (1 si es la primera
+    fila; 2 si, como Base_Maestra o Pipeline_Backup, la fila 1 es metadata).
+    sheet_url: enlace del Google Sheet (por defecto PIPELINE_SHEET_URL).
+    """
+    client = _cliente_google_sheets(credenciales_sa)
     doc = client.open_by_url(sheet_url or PIPELINE_SHEET_URL)
-    hoja = doc.worksheet(worksheet_name or PIPELINE_WORKSHEET_NAME)
-    return pd.DataFrame(hoja.get_all_records(head=PIPELINE_HEADER_ROW))
+    hoja = doc.worksheet(worksheet_name)
+    return pd.DataFrame(hoja.get_all_records(head=header_row))
+
+
+def cargar_pipeline_desde_google_sheets(credenciales_sa, sheet_url=None, worksheet_name=None):
+    """Descarga el Pipeline directamente desde Google Sheets (ver
+    cargar_hoja_desde_google_sheets)."""
+    return cargar_hoja_desde_google_sheets(
+        credenciales_sa,
+        worksheet_name or PIPELINE_WORKSHEET_NAME,
+        header_row=PIPELINE_HEADER_ROW,
+        sheet_url=sheet_url,
+    )
 
 
 def filtrar_pipeline(df_pipeline, corredoras=None, aseguradoras=None, asegurados=None, ajustadores=None):
