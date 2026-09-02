@@ -119,6 +119,38 @@ def _slide_resumen(prs, datos):
     return slide
 
 
+def _caja_manual(slide, left, top, width, height, titulo):
+    """Etiqueta + caja vacía con borde punteado, pensada para completarse a
+    mano en PowerPoint (mismo estilo que los casilleros de fotos)."""
+    etiqueta = slide.shapes.add_textbox(left, top, width, Inches(0.3))
+    p = etiqueta.text_frame.paragraphs[0]
+    p.text = titulo.upper()
+    p.font.size, p.font.bold, p.font.color.rgb = Pt(11), True, TEAL_OSCURO
+
+    alto_caja = height - Inches(0.32)
+    caja = slide.shapes.add_shape(1, left, top + Inches(0.32), width, alto_caja)
+    caja.fill.solid()
+    caja.fill.fore_color.rgb = GRIS_CLARO
+    caja.line.color.rgb = RGBColor(0xB0, 0xB8, 0xC2)
+    caja.line.width = Pt(1)
+    caja.line.dash_style = MSO_LINE_DASH_STYLE.DASH
+    caja.shadow.inherit = False
+    caja.text_frame.paragraphs[0].text = ""
+
+
+def _slide_descripcion(prs, datos):
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _agregar_header(slide, "DESCRIPCIÓN DEL SINIESTRO Y MATERIA ASEGURADA", datos.get("nickname") or datos.get("asegurado") or "")
+
+    left, width = Inches(0.4), SLIDE_WIDTH - Inches(0.8)
+    top = HEADER_ALTO + Emu(36576) + Inches(0.3)
+    alto_caja, espacio = Inches(1.85), Inches(0.25)
+
+    _caja_manual(slide, left, top, width, alto_caja, "Descripción del Siniestro")
+    _caja_manual(slide, left, top + alto_caja + espacio, width, alto_caja, "Materia Asegurada")
+    return slide
+
+
 def _slide_fotos(prs, datos):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     _agregar_header(slide, "REGISTRO FOTOGRÁFICO", datos.get("nickname") or datos.get("asegurado") or "")
@@ -218,6 +250,7 @@ def generar_ficha_pptx(fila):
     prs.slide_height = SLIDE_HEIGHT
 
     _slide_resumen(prs, datos)
+    _slide_descripcion(prs, datos)
     _slide_fotos(prs, datos)
     _slide_gestiones(prs, datos)
 
