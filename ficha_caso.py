@@ -1,14 +1,21 @@
 """
-Generador de la "Ficha de Caso" individual (3 slides, pptx independiente
+Generador de la "Ficha de Caso" individual (7 slides, pptx independiente
 del Reporte de Cartera):
 
 1. Resumen del caso.
-2. Espacio en blanco para Registro Fotográfico (6 fotos, a llenar a mano
+2. Descripción del Siniestro / Materia Asegurada (en blanco, a llenar a mano).
+3. Reserva del caso: valor y desglose extraídos de la planilla base
+   (Pérdida bruta, Deducible, Monto asegurado, Pérdida neta/Reserva,
+   Gastos, Honorarios), con una columna en blanco para que el ajustador
+   justifique cada concepto.
+4. Estado Actual del Siniestro (cuadro de texto libre, en blanco).
+5. Próximas Acciones (cuadro de texto libre, en blanco).
+6. Espacio en blanco para Registro Fotográfico (6 fotos, a llenar a mano
    en PowerPoint una vez descargado el pptx).
-3. Espacio en blanco para el Detalle de Gestiones Realizadas (6 líneas de
+7. Espacio en blanco para el Detalle de Gestiones Realizadas (6 líneas de
    Fecha + Detalle, también a llenar a mano).
 
-No usa una plantilla .pptx: arma las 3 slides desde cero con python-pptx,
+No usa una plantilla .pptx: arma las slides desde cero con python-pptx,
 reutilizando el mismo logo y paleta de colores (navy + teal) que
 assets/plantilla_estado_cartera.pptx.
 """
@@ -218,6 +225,97 @@ def _slide_gestiones(prs, datos):
     return slide
 
 
+def _slide_reserva(prs, datos):
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _agregar_header(slide, "RESERVA DEL CASO", datos.get("nickname") or datos.get("asegurado") or "")
+
+    top = HEADER_ALTO + Emu(36576) + Inches(0.25)
+    left, width = Inches(0.4), SLIDE_WIDTH - Inches(0.8)
+
+    # --- Valor destacado (extraído de la planilla base) ---
+    callout = slide.shapes.add_shape(1, left, top, width, Inches(0.85))
+    callout.fill.solid()
+    callout.fill.fore_color.rgb = NAVY
+    callout.line.fill.background()
+    callout.shadow.inherit = False
+    tf = callout.text_frame
+    tf.word_wrap = True
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    p = tf.paragraphs[0]
+    p.alignment = PP_ALIGN.CENTER
+    p.text = "RESERVA (Pérdida neta)"
+    p.font.size, p.font.bold, p.font.color.rgb = Pt(11), True, TEAL
+    p2 = tf.add_paragraph()
+    p2.alignment = PP_ALIGN.CENTER
+    p2.text = datos.get("perdida_neta_fmt") or "—"
+    p2.font.size, p2.font.bold, p2.font.color.rgb = Pt(26), True, BLANCO
+
+    # --- Desglose extraído de la planilla + columna de justificación manual ---
+    top_tabla = top + Inches(1.05)
+    height_tabla = SLIDE_HEIGHT - top_tabla - Inches(0.3)
+    filas_valores = [
+        ("Pérdida bruta", datos.get("perdida_bruta_fmt")),
+        ("Deducible", datos.get("deducible_fmt")),
+        ("Monto asegurado", datos.get("monto_asegurado_fmt")),
+        ("Pérdida neta (Reserva)", datos.get("perdida_neta_fmt")),
+        ("Gastos", datos.get("gastos_fmt")),
+        ("Honorarios", datos.get("honorarios_fmt")),
+    ]
+    graphic_frame = slide.shapes.add_table(len(filas_valores) + 1, 3, left, top_tabla, width, height_tabla)
+    tabla = graphic_frame.table
+    tabla.columns[0].width = Inches(2.4)
+    tabla.columns[1].width = Inches(1.8)
+    tabla.columns[2].width = width - Inches(4.2)
+
+    for c, texto in enumerate(["Concepto", "Monto (planilla)", "Justificación del ajustador"]):
+        celda = tabla.cell(0, c)
+        celda.text_frame.paragraphs[0].text = texto
+        celda.fill.solid()
+        celda.fill.fore_color.rgb = NAVY_OSCURO
+        run = celda.text_frame.paragraphs[0].runs[0]
+        run.font.size, run.font.bold, run.font.color.rgb = Pt(11), True, BLANCO
+
+    for r, (concepto, monto) in enumerate(filas_valores, start=1):
+        celda_concepto = tabla.cell(r, 0)
+        celda_concepto.text_frame.paragraphs[0].text = concepto
+        celda_concepto.fill.solid()
+        celda_concepto.fill.fore_color.rgb = GRIS_CLARO
+        celda_concepto.text_frame.paragraphs[0].runs[0].font.size = Pt(11)
+
+        celda_monto = tabla.cell(r, 1)
+        celda_monto.text_frame.paragraphs[0].text = monto or "—"
+        celda_monto.fill.solid()
+        celda_monto.fill.fore_color.rgb = GRIS_CLARO
+        celda_monto.text_frame.paragraphs[0].runs[0].font.size = Pt(11)
+
+        celda_just = tabla.cell(r, 2)
+        celda_just.text_frame.paragraphs[0].text = ""
+        celda_just.fill.solid()
+        celda_just.fill.fore_color.rgb = BLANCO
+    return slide
+
+
+def _slide_texto_libre(prs, datos, titulo):
+    """Slide con un único cuadro grande en blanco, para completar a mano
+    (usado por Estado Actual del Siniestro y Próximas Acciones)."""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _agregar_header(slide, titulo, datos.get("nickname") or datos.get("asegurado") or "")
+
+    top = HEADER_ALTO + Emu(36576) + Inches(0.3)
+    left, width = Inches(0.4), SLIDE_WIDTH - Inches(0.8)
+    height = SLIDE_HEIGHT - top - Inches(0.3)
+
+    caja = slide.shapes.add_shape(1, left, top, width, height)
+    caja.fill.solid()
+    caja.fill.fore_color.rgb = GRIS_CLARO
+    caja.line.color.rgb = RGBColor(0xB0, 0xB8, 0xC2)
+    caja.line.width = Pt(1)
+    caja.line.dash_style = MSO_LINE_DASH_STYLE.DASH
+    caja.shadow.inherit = False
+    caja.text_frame.paragraphs[0].text = ""
+    return slide
+
+
 def _fmt_monto(valor, divisa):
     try:
         numero = float(valor)
@@ -243,6 +341,10 @@ def generar_ficha_pptx(fila):
         dias_asignacion=fila.get("Días desde asignación"),
         monto_asegurado_fmt=_fmt_monto(fila.get("Monto asegurado (en moneda del caso)"), divisa),
         perdida_bruta_fmt=_fmt_monto(fila.get("Perdida bruta (en moneda del caso)"), divisa),
+        deducible_fmt=_fmt_monto(fila.get("Deducible (en moneda del caso)"), divisa),
+        perdida_neta_fmt=_fmt_monto(fila.get("Perdida neta (en moneda del caso)"), divisa),
+        gastos_fmt=_fmt_monto(fila.get("Gastos (UF)"), "UF"),
+        honorarios_fmt=_fmt_monto(fila.get("Honorarios (UF)"), "UF"),
     )
 
     prs = Presentation()
@@ -251,6 +353,9 @@ def generar_ficha_pptx(fila):
 
     _slide_resumen(prs, datos)
     _slide_descripcion(prs, datos)
+    _slide_reserva(prs, datos)
+    _slide_texto_libre(prs, datos, "ESTADO ACTUAL DEL SINIESTRO")
+    _slide_texto_libre(prs, datos, "PRÓXIMAS ACCIONES")
     _slide_fotos(prs, datos)
     _slide_gestiones(prs, datos)
 
