@@ -4,8 +4,10 @@ del Reporte de Cartera):
 
 1. Resumen del caso (Ficha del Caso).
 2. Descripción del Siniestro / Materia Asegurada (texto libre, en blanco).
-3. Espacio en blanco para Registro Fotográfico (6 fotos, a llenar a mano
-   en PowerPoint una vez descargado el pptx).
+3. Registro Fotográfico: si se le pasan fotos ya seleccionadas (p.ej.
+   extraídas de un Acta de Inspección con acta_inspeccion.py), se generan
+   tantas páginas de 6 fotos (con su pie de foto) como hagan falta; si no,
+   una sola slide con 6 casilleros en blanco para completar a mano.
 4. Reserva del caso: valor y desglose extraídos de la planilla base
    (Pérdida bruta, Deducible, Monto asegurado, Pérdida neta/Reserva,
    Gastos, Honorarios), con una columna en blanco para que el ajustador
@@ -48,6 +50,13 @@ GRIS_CLARO = RGBColor(0xF4, 0xF6, 0xF8)
 BLANCO = RGBColor(0xFF, 0xFF, 0xFF)
 
 HEADER_ALTO = Inches(0.82)
+
+
+def _truncar(texto, max_chars):
+    texto = str(texto).strip()
+    if len(texto) <= max_chars:
+        return texto
+    return texto[: max_chars - 1].rstrip() + "…"
 
 
 def _sin_relleno_ni_borde(shape):
@@ -168,39 +177,91 @@ def _slide_descripcion(prs, datos):
     return slide
 
 
-def _slide_fotos(prs, datos):
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    _agregar_header(slide, "REGISTRO FOTOGRÁFICO", datos.get("nickname") or datos.get("asegurado") or "")
+_FOTOS_POR_PAGINA = 6
+_FOTOS_COLS, _FOTOS_FILAS = 3, 2
 
-    cols, filas = 3, 2
-    margen = Inches(0.4)
-    espacio = Inches(0.2)
-    ancho_disponible = SLIDE_WIDTH - 2 * margen - (cols - 1) * espacio
-    alto_disponible = SLIDE_HEIGHT - HEADER_ALTO - Emu(36576) - Inches(0.6) - (filas - 1) * espacio
-    ancho_foto = Emu(int(ancho_disponible / cols))
-    alto_foto = Emu(int(alto_disponible / filas))
+
+def _posiciones_grilla_fotos():
+    margen, espacio = Inches(0.4), Inches(0.2)
+    ancho_disponible = SLIDE_WIDTH - 2 * margen - (_FOTOS_COLS - 1) * espacio
+    alto_disponible = SLIDE_HEIGHT - HEADER_ALTO - Emu(36576) - Inches(0.6) - (_FOTOS_FILAS - 1) * espacio
+    ancho, alto = Emu(int(ancho_disponible / _FOTOS_COLS)), Emu(int(alto_disponible / _FOTOS_FILAS))
     top_inicial = HEADER_ALTO + Emu(36576) + Inches(0.3)
+    posiciones = []
+    for f in range(_FOTOS_FILAS):
+        for c in range(_FOTOS_COLS):
+            left = margen + c * (ancho + espacio)
+            top = top_inicial + f * (alto + espacio)
+            posiciones.append((left, top, ancho, alto))
+    return posiciones
 
-    n = 1
-    for f in range(filas):
-        for c in range(cols):
-            left = margen + c * (ancho_foto + espacio)
-            top = top_inicial + f * (alto_foto + espacio)
-            marco = slide.shapes.add_shape(1, left, top, ancho_foto, alto_foto)
-            marco.fill.solid()
-            marco.fill.fore_color.rgb = GRIS_CLARO
-            marco.line.color.rgb = RGBColor(0xB0, 0xB8, 0xC2)
-            marco.line.width = Pt(1)
-            marco.line.dash_style = MSO_LINE_DASH_STYLE.DASH
-            marco.shadow.inherit = False
-            tf = marco.text_frame
-            tf.word_wrap = True
-            p = tf.paragraphs[0]
-            p.alignment = PP_ALIGN.CENTER
-            p.text = f"Foto {n}"
-            p.font.size, p.font.color.rgb = Pt(13), RGBColor(0x8A, 0x93, 0x9E)
-            tf.vertical_anchor = MSO_ANCHOR.MIDDLE
-            n += 1
+
+def _casillero_vacio(slide, left, top, ancho, alto, numero):
+    marco = slide.shapes.add_shape(1, left, top, ancho, alto)
+    marco.fill.solid()
+    marco.fill.fore_color.rgb = GRIS_CLARO
+    marco.line.color.rgb = RGBColor(0xB0, 0xB8, 0xC2)
+    marco.line.width = Pt(1)
+    marco.line.dash_style = MSO_LINE_DASH_STYLE.DASH
+    marco.shadow.inherit = False
+    tf = marco.text_frame
+    tf.word_wrap = True
+    p = tf.paragraphs[0]
+    p.alignment = PP_ALIGN.CENTER
+    p.text = f"Foto {numero}"
+    p.font.size, p.font.color.rgb = Pt(13), RGBColor(0x8A, 0x93, 0x9E)
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+
+
+def _casillero_con_foto(slide, left, top, ancho, alto, imagen_bytes, pie):
+    alto_pie = Inches(0.4)
+    alto_imagen = alto - alto_pie
+
+    marco = slide.shapes.add_shape(1, left, top, ancho, alto)
+    marco.fill.solid()
+    marco.fill.fore_color.rgb = BLANCO
+    marco.line.color.rgb = RGBColor(0xD0, 0xD5, 0xDC)
+    marco.line.width = Pt(0.75)
+    marco.shadow.inherit = False
+    marco.text_frame.paragraphs[0].text = ""
+
+    try:
+        from PIL import Image
+        iw, ih = Image.open(io.BytesIO(imagen_bytes)).size
+        escala = min(ancho / iw, alto_imagen / ih)
+        w, h = int(iw * escala), int(ih * escala)
+        x = left + (ancho - w) // 2
+        y = top + (alto_imagen - h) // 2
+        slide.shapes.add_picture(io.BytesIO(imagen_bytes), x, y, width=w, height=h)
+    except Exception:
+        slide.shapes.add_picture(io.BytesIO(imagen_bytes), left, top, width=ancho, height=alto_imagen)
+
+    caja_pie = slide.shapes.add_textbox(left, top + alto_imagen, ancho, alto_pie)
+    tf = caja_pie.text_frame
+    tf.word_wrap = True
+    p = tf.paragraphs[0]
+    p.alignment = PP_ALIGN.CENTER
+    p.text = _truncar(pie, 90) if pie else ""
+    p.font.size, p.font.color.rgb = Pt(8), GRIS_TEXTO
+
+
+def _slide_fotos(prs, datos, fotos=None, pagina=None, total_paginas=None):
+    """Si `fotos` viene vacío/None: una slide con 6 casilleros en blanco
+    (comportamiento original, para completar a mano). Si trae fotos (ya
+    seleccionadas por el ajustador): esta función se llama una vez por
+    página de hasta 6 fotos — ver generar_ficha_pptx."""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    subtitulo = datos.get("nickname") or datos.get("asegurado") or ""
+    if total_paginas and total_paginas > 1:
+        subtitulo = f"{subtitulo} — Página {pagina} de {total_paginas}"
+    _agregar_header(slide, "REGISTRO FOTOGRÁFICO", subtitulo)
+
+    posiciones = _posiciones_grilla_fotos()
+    for i, (left, top, ancho, alto) in enumerate(posiciones, start=1):
+        if fotos and i <= len(fotos):
+            _casillero_con_foto(slide, left, top, ancho, alto, fotos[i - 1]["imagen"], fotos[i - 1].get("pie", ""))
+        elif not fotos:
+            _casillero_vacio(slide, left, top, ancho, alto, i)
     return slide
 
 
@@ -357,7 +418,7 @@ def _fmt_monto(valor, divisa):
     return f"{texto} {divisa}".strip()
 
 
-def generar_ficha_pptx(fila, observacion_pipeline=None, observacion_fuente=None):
+def generar_ficha_pptx(fila, observacion_pipeline=None, observacion_fuente=None, fotos_seleccionadas=None):
     """fila: dict o pandas.Series con los datos del caso, usando los mismos
     nombres de columna que trae la Base Maestra (ver app.py).
 
@@ -365,6 +426,12 @@ def generar_ficha_pptx(fila, observacion_pipeline=None, observacion_fuente=None)
     "Estado Actual del Siniestro" — normalmente la observación del Pipeline
     para ese Caso JPV. observacion_fuente describe de dónde salió (se
     muestra como nota al pie, p.ej. "Observaciones del Pipeline").
+
+    fotos_seleccionadas: lista opcional de dicts {"imagen": bytes, "pie": str}
+    (p.ej. de acta_inspeccion.extraer_fotos_acta, ya filtrada por el
+    ajustador) para precargar el Registro Fotográfico. Se reparten en
+    páginas de 6 fotos cada una; sin este argumento, queda una sola slide
+    con 6 casilleros en blanco para completar a mano.
     """
     divisa = str(fila.get("Divisa") or "").strip()
     datos = dict(
@@ -391,7 +458,15 @@ def generar_ficha_pptx(fila, observacion_pipeline=None, observacion_fuente=None)
 
     _slide_resumen(prs, datos)
     _slide_descripcion(prs, datos)
-    _slide_fotos(prs, datos)
+    if fotos_seleccionadas:
+        paginas = [
+            fotos_seleccionadas[i:i + _FOTOS_POR_PAGINA]
+            for i in range(0, len(fotos_seleccionadas), _FOTOS_POR_PAGINA)
+        ]
+        for num_pagina, pagina in enumerate(paginas, start=1):
+            _slide_fotos(prs, datos, fotos=pagina, pagina=num_pagina, total_paginas=len(paginas))
+    else:
+        _slide_fotos(prs, datos)
     _slide_reserva(prs, datos)
     _slide_texto_libre(
         prs, datos, "ESTADO ACTUAL DEL SINIESTRO",

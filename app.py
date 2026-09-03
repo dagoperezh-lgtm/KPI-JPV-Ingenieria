@@ -4,12 +4,14 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import io
+import hashlib
 from datetime import datetime, timedelta
 from docx import Document
 from docx.shared import Inches
 import matplotlib.pyplot as plt
 import reporte_cartera
 import ficha_caso
+import acta_inspeccion
 from tablero_datos import parsear_fecha_flexible
 
 # --- SECCIÓN 1: CONFIGURACIÓN Y MOTOR DE CARGA ---
@@ -67,6 +69,10 @@ def buscar_indice_columna(columnas, palabras_clave):
             if palabra in str(col).strip().lower():
                 return i
     return 0
+
+@st.cache_data(show_spinner="Extrayendo fotos del Acta de Inspección...")
+def extraer_fotos_acta_cacheado(archivo_bytes):
+    return acta_inspeccion.extraer_fotos_acta(io.BytesIO(archivo_bytes))
 
 def _google_configurado():
     """`"x" in st.secrets` lanza StreamlitSecretNotFoundError si no existe
@@ -577,9 +583,38 @@ with tab_ficha:
                 st.markdown(f"**Fecha de asignación:** {fila.get('Fecha de asignación', '—')}")
                 st.markdown(f"**Días desde asignación:** {fila.get('Días desde asignación', '—')}")
 
+            st.divider()
+            st.markdown("#### 📷 Acta de Inspección (opcional)")
+            st.caption("Sube el Acta de Inspección en Word para precargar el Registro Fotográfico. Se generan tantas páginas de 6 fotos como hagan falta con las que dejes marcadas.")
+            archivo_acta = st.file_uploader("Cargar Acta de Inspección (.docx)", type=["docx"], key="ficha_acta_uploader")
+
+            fotos_seleccionadas = []
+            if archivo_acta is not None:
+                acta_bytes = archivo_acta.getvalue()
+                acta_id = hashlib.md5(acta_bytes).hexdigest()[:8]
+                try:
+                    fotos_candidatas = extraer_fotos_acta_cacheado(acta_bytes)
+                except Exception as e:
+                    fotos_candidatas = []
+                    st.error(f"No se pudo leer el Acta de Inspección: {e}")
+
+                if archivo_acta is not None and not fotos_candidatas:
+                    st.warning("No se encontraron fotos en el Acta cargada.")
+                elif fotos_candidatas:
+                    st.markdown(f"**{len(fotos_candidatas)} fotos encontradas.** Desmarca las que no sirvan para la ficha.")
+                    cols_galeria = st.columns(3)
+                    for i, foto in enumerate(fotos_candidatas):
+                        with cols_galeria[i % 3]:
+                            st.image(foto["imagen"], use_container_width=True)
+                            marcado = st.checkbox(
+                                foto["pie"][:70] or f"Foto {i + 1}", value=True, key=f"ficha_foto_check_{acta_id}_{i}",
+                            )
+                            if marcado:
+                                fotos_seleccionadas.append(foto)
+
             if st.button("🎯 Generar Ficha de Caso (PPTX)", use_container_width=True, key="btn_generar_ficha"):
                 observacion_texto, observacion_fuente = buscar_observacion_caso(fila.get("ID_Caso"), df_pipeline, fila)
-                pptx_bytes = ficha_caso.generar_ficha_pptx(fila, observacion_texto, observacion_fuente)
+                pptx_bytes = ficha_caso.generar_ficha_pptx(fila, observacion_texto, observacion_fuente, fotos_seleccionadas or None)
                 nombre_archivo = "".join(c if c.isalnum() else "_" for c in str(fila.get("ID_Caso", ""))).strip("_") or "Caso"
                 st.download_button(
                     label="⬇️ Descargar Ficha_Caso.pptx",
