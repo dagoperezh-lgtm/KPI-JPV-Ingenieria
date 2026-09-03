@@ -71,8 +71,12 @@ def buscar_indice_columna(columnas, palabras_clave):
     return 0
 
 @st.cache_data(show_spinner="Extrayendo fotos del Acta de Inspección...")
-def extraer_fotos_acta_cacheado(archivo_bytes):
-    return acta_inspeccion.extraer_fotos_acta(io.BytesIO(archivo_bytes))
+def extraer_fotos_acta_cacheado(archivo_bytes, nombre_archivo):
+    return acta_inspeccion.extraer_fotos_acta(archivo_bytes, nombre_archivo)
+
+@st.cache_data(show_spinner="Buscando Hechos y Circunstancias en el Acta...")
+def extraer_descripcion_siniestro_cacheado(archivo_bytes, nombre_archivo):
+    return acta_inspeccion.extraer_descripcion_siniestro(archivo_bytes, nombre_archivo)
 
 def _google_configurado():
     """`"x" in st.secrets` lanza StreamlitSecretNotFoundError si no existe
@@ -585,22 +589,38 @@ with tab_ficha:
 
             st.divider()
             st.markdown("#### 📷 Acta de Inspección (opcional)")
-            st.caption("Sube el Acta de Inspección en Word para precargar el Registro Fotográfico. Se generan tantas páginas de 6 fotos como hagan falta con las que dejes marcadas.")
-            archivo_acta = st.file_uploader("Cargar Acta de Inspección (.docx)", type=["docx"], key="ficha_acta_uploader")
+            st.caption(
+                "Sube el Acta de Inspección (Word o PDF) para precargar el Registro Fotográfico y la "
+                "Descripción del Siniestro (desde \"Hechos y Circunstancias\"). Word es más confiable; "
+                "PDF funciona solo si el acta fue exportada desde Word (no un PDF escaneado) y es "
+                "mejor esfuerzo — revisa el resultado antes de dar por buena la ficha."
+            )
+            archivo_acta = st.file_uploader("Cargar Acta de Inspección (.docx o .pdf)", type=["docx", "pdf"], key="ficha_acta_uploader")
 
             fotos_seleccionadas = []
+            descripcion_siniestro_texto, descripcion_siniestro_fuente = None, None
             if archivo_acta is not None:
                 acta_bytes = archivo_acta.getvalue()
                 acta_id = hashlib.md5(acta_bytes).hexdigest()[:8]
                 try:
-                    fotos_candidatas = extraer_fotos_acta_cacheado(acta_bytes)
+                    fotos_candidatas = extraer_fotos_acta_cacheado(acta_bytes, archivo_acta.name)
                 except Exception as e:
                     fotos_candidatas = []
                     st.error(f"No se pudo leer el Acta de Inspección: {e}")
 
-                if archivo_acta is not None and not fotos_candidatas:
+                try:
+                    descripcion_siniestro_texto = extraer_descripcion_siniestro_cacheado(acta_bytes, archivo_acta.name)
+                    if descripcion_siniestro_texto:
+                        descripcion_siniestro_fuente = "Hechos y Circunstancias del Acta de Inspección"
+                except Exception:
+                    descripcion_siniestro_texto = None
+
+                if descripcion_siniestro_texto:
+                    st.success("Se encontró \"Hechos y Circunstancias\" en el Acta — se precargará en Descripción del Siniestro.")
+
+                if not fotos_candidatas:
                     st.warning("No se encontraron fotos en el Acta cargada.")
-                elif fotos_candidatas:
+                else:
                     st.markdown(f"**{len(fotos_candidatas)} fotos encontradas.** Desmarca las que no sirvan para la ficha.")
                     cols_galeria = st.columns(3)
                     for i, foto in enumerate(fotos_candidatas):
@@ -614,7 +634,10 @@ with tab_ficha:
 
             if st.button("🎯 Generar Ficha de Caso (PPTX)", use_container_width=True, key="btn_generar_ficha"):
                 observacion_texto, observacion_fuente = buscar_observacion_caso(fila.get("ID_Caso"), df_pipeline, fila)
-                pptx_bytes = ficha_caso.generar_ficha_pptx(fila, observacion_texto, observacion_fuente, fotos_seleccionadas or None)
+                pptx_bytes = ficha_caso.generar_ficha_pptx(
+                    fila, observacion_texto, observacion_fuente, fotos_seleccionadas or None,
+                    descripcion_siniestro_texto, descripcion_siniestro_fuente,
+                )
                 nombre_archivo = "".join(c if c.isalnum() else "_" for c in str(fila.get("ID_Caso", ""))).strip("_") or "Caso"
                 st.download_button(
                     label="⬇️ Descargar Ficha_Caso.pptx",

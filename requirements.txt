@@ -8,3 +8,4 @@ matplotlib
 python-pptx
 gspread
 google-auth
+pymupdf

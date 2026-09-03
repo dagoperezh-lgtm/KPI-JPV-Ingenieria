@@ -140,15 +140,19 @@ def _slide_resumen(prs, datos):
     return slide
 
 
-def _caja_manual(slide, left, top, width, height, titulo):
-    """Etiqueta + caja vacía con borde punteado, pensada para completarse a
-    mano en PowerPoint (mismo estilo que los casilleros de fotos)."""
+def _caja_manual(slide, left, top, width, height, titulo, texto_precargado=None, fuente=None):
+    """Etiqueta + caja con borde punteado. Sin `texto_precargado`, queda
+    vacía con la nota "(Texto libre)" para completar a mano. Con
+    `texto_precargado` (p.ej. "Hechos y Circunstancias" del Acta de
+    Inspección), se precarga ese texto —editable— y se indica la `fuente`
+    en una nota al pie."""
     etiqueta = slide.shapes.add_textbox(left, top, width, Inches(0.3))
     p = etiqueta.text_frame.paragraphs[0]
     p.text = titulo.upper()
     p.font.size, p.font.bold, p.font.color.rgb = Pt(11), True, TEAL_OSCURO
 
-    alto_caja = height - Inches(0.32)
+    alto_nota = Inches(0.22) if (texto_precargado and fuente) else Inches(0)
+    alto_caja = height - Inches(0.32) - alto_nota
     caja = slide.shapes.add_shape(1, left, top + Inches(0.32), width, alto_caja)
     caja.fill.solid()
     caja.fill.fore_color.rgb = GRIS_CLARO
@@ -159,12 +163,25 @@ def _caja_manual(slide, left, top, width, height, titulo):
     tf = caja.text_frame
     tf.word_wrap = True
     tf.vertical_anchor = MSO_ANCHOR.TOP
+    tf.margin_left, tf.margin_right = Pt(8), Pt(8)
+    tf.margin_top, tf.margin_bottom = Pt(6), Pt(6)
     p = tf.paragraphs[0]
-    p.text = "(Texto libre)"
-    p.font.size, p.font.italic, p.font.color.rgb = Pt(11), True, RGBColor(0x8A, 0x93, 0x9E)
+    if texto_precargado:
+        tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+        p.text = texto_precargado
+        p.font.size, p.font.color.rgb = Pt(12), GRIS_TEXTO
+    else:
+        p.text = "(Texto libre)"
+        p.font.size, p.font.italic, p.font.color.rgb = Pt(11), True, RGBColor(0x8A, 0x93, 0x9E)
+
+    if texto_precargado and fuente:
+        nota = slide.shapes.add_textbox(left, top + Inches(0.32) + alto_caja + Inches(0.02), width, alto_nota)
+        pn = nota.text_frame.paragraphs[0]
+        pn.text = f"Fuente: {fuente} — edítalo si corresponde."
+        pn.font.size, pn.font.italic, pn.font.color.rgb = Pt(8), True, RGBColor(0x8A, 0x93, 0x9E)
 
 
-def _slide_descripcion(prs, datos):
+def _slide_descripcion(prs, datos, descripcion_siniestro=None, descripcion_fuente=None):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     _agregar_header(slide, "DESCRIPCIÓN DEL SINIESTRO Y MATERIA ASEGURADA", datos.get("nickname") or datos.get("asegurado") or "")
 
@@ -172,7 +189,10 @@ def _slide_descripcion(prs, datos):
     top = HEADER_ALTO + Emu(36576) + Inches(0.3)
     alto_caja, espacio = Inches(1.85), Inches(0.25)
 
-    _caja_manual(slide, left, top, width, alto_caja, "Descripción del Siniestro")
+    _caja_manual(
+        slide, left, top, width, alto_caja, "Descripción del Siniestro",
+        texto_precargado=descripcion_siniestro, fuente=descripcion_fuente,
+    )
     _caja_manual(slide, left, top + alto_caja + espacio, width, alto_caja, "Materia Asegurada")
     return slide
 
@@ -214,16 +234,10 @@ def _casillero_vacio(slide, left, top, ancho, alto, numero):
 
 
 def _casillero_con_foto(slide, left, top, ancho, alto, imagen_bytes, pie):
+    """Sin marco/recuadro: la foto va directo sobre el fondo de la slide,
+    con su pie de foto debajo (más limpio en modo presentación)."""
     alto_pie = Inches(0.4)
     alto_imagen = alto - alto_pie
-
-    marco = slide.shapes.add_shape(1, left, top, ancho, alto)
-    marco.fill.solid()
-    marco.fill.fore_color.rgb = BLANCO
-    marco.line.color.rgb = RGBColor(0xD0, 0xD5, 0xDC)
-    marco.line.width = Pt(0.75)
-    marco.shadow.inherit = False
-    marco.text_frame.paragraphs[0].text = ""
 
     try:
         from PIL import Image
@@ -418,7 +432,10 @@ def _fmt_monto(valor, divisa):
     return f"{texto} {divisa}".strip()
 
 
-def generar_ficha_pptx(fila, observacion_pipeline=None, observacion_fuente=None, fotos_seleccionadas=None):
+def generar_ficha_pptx(
+    fila, observacion_pipeline=None, observacion_fuente=None, fotos_seleccionadas=None,
+    descripcion_siniestro=None, descripcion_fuente=None,
+):
     """fila: dict o pandas.Series con los datos del caso, usando los mismos
     nombres de columna que trae la Base Maestra (ver app.py).
 
@@ -432,6 +449,12 @@ def generar_ficha_pptx(fila, observacion_pipeline=None, observacion_fuente=None,
     ajustador) para precargar el Registro Fotográfico. Se reparten en
     páginas de 6 fotos cada una; sin este argumento, queda una sola slide
     con 6 casilleros en blanco para completar a mano.
+
+    descripcion_siniestro: texto completo (opcional) para precargar
+    "Descripción del Siniestro" — normalmente el campo "Hechos y
+    Circunstancias" del Acta de Inspección (ver
+    acta_inspeccion.extraer_descripcion_siniestro). descripcion_fuente
+    describe de dónde salió.
     """
     divisa = str(fila.get("Divisa") or "").strip()
     datos = dict(
@@ -457,7 +480,7 @@ def generar_ficha_pptx(fila, observacion_pipeline=None, observacion_fuente=None,
     prs.slide_height = SLIDE_HEIGHT
 
     _slide_resumen(prs, datos)
-    _slide_descripcion(prs, datos)
+    _slide_descripcion(prs, datos, descripcion_siniestro=descripcion_siniestro, descripcion_fuente=descripcion_fuente)
     if fotos_seleccionadas:
         paginas = [
             fotos_seleccionadas[i:i + _FOTOS_POR_PAGINA]
