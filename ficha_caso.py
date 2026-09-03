@@ -10,13 +10,15 @@ del Reporte de Cartera):
    (Pérdida bruta, Deducible, Monto asegurado, Pérdida neta/Reserva,
    Gastos, Honorarios), con una columna en blanco para que el ajustador
    justifique cada concepto.
-5. Estado Actual del Siniestro (texto libre, en blanco).
+5. Estado Actual del Siniestro: precargado con la observación completa
+   del Pipeline para ese caso (si existe), editable; si no hay dato,
+   queda en blanco como texto libre.
 6. Detalle de Gestiones Realizadas (tabla de 6 filas vacías, Fecha +
    Detalle, a llenar a mano).
 7. Próximas Acciones (texto libre, en blanco).
 
-Las slides de texto libre (2, 5 y 7) llevan la nota "(Texto libre)"
-dentro del recuadro en blanco.
+Las slides de texto libre en blanco (2 y 7, y la 5 cuando no hay
+observación del Pipeline) llevan la nota "(Texto libre)".
 
 No usa una plantilla .pptx: arma las slides desde cero con python-pptx,
 reutilizando el mismo logo y paleta de colores (navy + teal) que
@@ -29,7 +31,7 @@ import pandas as pd
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.dml import MSO_LINE_DASH_STYLE
-from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR, MSO_AUTO_SIZE
 from pptx.util import Emu, Inches, Pt
 
 LOGO_PATH = os.path.join(os.path.dirname(__file__), "assets", "logo_jpv.png")
@@ -303,15 +305,19 @@ def _slide_reserva(prs, datos):
     return slide
 
 
-def _slide_texto_libre(prs, datos, titulo):
-    """Slide con un único cuadro grande en blanco, para completar a mano
-    (usado por Estado Actual del Siniestro y Próximas Acciones)."""
+def _slide_texto_libre(prs, datos, titulo, texto_precargado=None, fuente=None):
+    """Slide con un único cuadro grande de texto (usado por Estado Actual del
+    Siniestro y Próximas Acciones). Si `texto_precargado` viene vacío, el
+    cuadro queda en blanco con la nota "(Texto libre)"; si trae contenido
+    (p.ej. la observación del Pipeline), se precarga ese texto —editable— y
+    se indica su `fuente` en una nota al pie."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     _agregar_header(slide, titulo, datos.get("nickname") or datos.get("asegurado") or "")
 
     top = HEADER_ALTO + Emu(36576) + Inches(0.3)
     left, width = Inches(0.4), SLIDE_WIDTH - Inches(0.8)
-    height = SLIDE_HEIGHT - top - Inches(0.3)
+    alto_nota = Inches(0.3) if (texto_precargado and fuente) else Inches(0)
+    height = SLIDE_HEIGHT - top - Inches(0.3) - alto_nota
 
     caja = slide.shapes.add_shape(1, left, top, width, height)
     caja.fill.solid()
@@ -323,9 +329,22 @@ def _slide_texto_libre(prs, datos, titulo):
     tf = caja.text_frame
     tf.word_wrap = True
     tf.vertical_anchor = MSO_ANCHOR.TOP
+    tf.margin_left, tf.margin_right = Pt(10), Pt(10)
+    tf.margin_top, tf.margin_bottom = Pt(8), Pt(8)
     p = tf.paragraphs[0]
-    p.text = "(Texto libre)"
-    p.font.size, p.font.italic, p.font.color.rgb = Pt(11), True, RGBColor(0x8A, 0x93, 0x9E)
+    if texto_precargado:
+        tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+        p.text = texto_precargado
+        p.font.size, p.font.color.rgb = Pt(13), GRIS_TEXTO
+    else:
+        p.text = "(Texto libre)"
+        p.font.size, p.font.italic, p.font.color.rgb = Pt(11), True, RGBColor(0x8A, 0x93, 0x9E)
+
+    if texto_precargado and fuente:
+        nota = slide.shapes.add_textbox(left, top + height + Inches(0.03), width, alto_nota)
+        pn = nota.text_frame.paragraphs[0]
+        pn.text = f"Fuente: {fuente} — edítalo si corresponde."
+        pn.font.size, pn.font.italic, pn.font.color.rgb = Pt(9), True, RGBColor(0x8A, 0x93, 0x9E)
     return slide
 
 
@@ -338,9 +357,15 @@ def _fmt_monto(valor, divisa):
     return f"{texto} {divisa}".strip()
 
 
-def generar_ficha_pptx(fila):
+def generar_ficha_pptx(fila, observacion_pipeline=None, observacion_fuente=None):
     """fila: dict o pandas.Series con los datos del caso, usando los mismos
-    nombres de columna que trae la Base Maestra (ver app.py)."""
+    nombres de columna que trae la Base Maestra (ver app.py).
+
+    observacion_pipeline: texto completo (opcional) para precargar la slide
+    "Estado Actual del Siniestro" — normalmente la observación del Pipeline
+    para ese Caso JPV. observacion_fuente describe de dónde salió (se
+    muestra como nota al pie, p.ej. "Observaciones del Pipeline").
+    """
     divisa = str(fila.get("Divisa") or "").strip()
     datos = dict(
         asegurado=fila.get("Asegurado"),
@@ -368,7 +393,10 @@ def generar_ficha_pptx(fila):
     _slide_descripcion(prs, datos)
     _slide_fotos(prs, datos)
     _slide_reserva(prs, datos)
-    _slide_texto_libre(prs, datos, "ESTADO ACTUAL DEL SINIESTRO")
+    _slide_texto_libre(
+        prs, datos, "ESTADO ACTUAL DEL SINIESTRO",
+        texto_precargado=observacion_pipeline, fuente=observacion_fuente,
+    )
     _slide_gestiones(prs, datos)
     _slide_texto_libre(prs, datos, "PRÓXIMAS ACCIONES")
 

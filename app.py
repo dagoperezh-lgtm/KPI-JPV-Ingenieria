@@ -507,6 +507,27 @@ with tab_tendencias:
     else:
         st.info("No hay casos cerrados con fechas válidas para mostrar tendencias históricas.")
 
+def buscar_observacion_caso(caso_id, df_pipeline, fila_base_maestra):
+    """Busca la observación completa para 'Estado Actual del Siniestro':
+    primero en el Pipeline (por Caso JPV), y si no hay match ahí, cae a la
+    Base Maestra del propio caso. Devuelve (texto, fuente) o (None, None)."""
+    if df_pipeline is not None and "Número de caso" in df_pipeline.columns:
+        match = df_pipeline[df_pipeline["Número de caso"].astype(str) == str(caso_id)]
+        if not match.empty:
+            fila_pipeline = match.iloc[0]
+            texto = reporte_cartera.limpiar_observacion(fila_pipeline.get("Observaciones", ""))
+            if not texto or texto.lower() in ("nan", "none"):
+                texto = reporte_cartera.limpiar_observacion(fila_pipeline.get("Contenido último movimiento", ""))
+            if texto and texto.lower() not in ("nan", "none"):
+                return texto, "Observaciones del Pipeline"
+
+    for campo in ["Observaciones", "Última observación", "Contenido último movimiento"]:
+        texto = reporte_cartera.limpiar_observacion(fila_base_maestra.get(campo, ""))
+        if texto and texto.lower() not in ("nan", "none"):
+            return texto, "Base Maestra"
+    return None, None
+
+
 with tab_ficha:
     st.subheader("🔎 Ficha de Caso Individual")
     st.caption("Busca un caso por N° de Caso JPV o por texto libre en el Nickname para generar su ficha (pptx de 3 slides: resumen, registro fotográfico y gestiones, estas dos últimas para completar a mano).")
@@ -557,7 +578,8 @@ with tab_ficha:
                 st.markdown(f"**Días desde asignación:** {fila.get('Días desde asignación', '—')}")
 
             if st.button("🎯 Generar Ficha de Caso (PPTX)", use_container_width=True, key="btn_generar_ficha"):
-                pptx_bytes = ficha_caso.generar_ficha_pptx(fila)
+                observacion_texto, observacion_fuente = buscar_observacion_caso(fila.get("ID_Caso"), df_pipeline, fila)
+                pptx_bytes = ficha_caso.generar_ficha_pptx(fila, observacion_texto, observacion_fuente)
                 nombre_archivo = "".join(c if c.isalnum() else "_" for c in str(fila.get("ID_Caso", ""))).strip("_") or "Caso"
                 st.download_button(
                     label="⬇️ Descargar Ficha_Caso.pptx",

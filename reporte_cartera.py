@@ -214,7 +214,7 @@ def sugerir_titulo_ajustador(ajustadores=None):
     return " · ".join(ajustadores) if ajustadores else "Cartera General"
 
 
-def _limpiar_observacion(texto):
+def limpiar_observacion(texto):
     return _TIMESTAMP_PREFIJO_RE.sub("", str(texto)).strip()
 
 
@@ -263,8 +263,8 @@ def preparar_tabla_casos(df_pipeline_filtrado, fecha_corte):
     prob_numerica = pd.to_numeric(df.get("Probabilidad cierre 2026", pd.Series(1.0, index=df.index)), errors="coerce") * 100
     prob = prob_indicacion.fillna(prob_numerica).fillna(100).round().astype(int)
 
-    observacion = df["Observaciones"].astype(str).apply(_limpiar_observacion)
-    fallback = df["Contenido último movimiento"].astype(str).apply(_limpiar_observacion)
+    observacion = df["Observaciones"].astype(str).apply(limpiar_observacion)
+    fallback = df["Contenido último movimiento"].astype(str).apply(limpiar_observacion)
     observacion_final = observacion.where(observacion.ne("") & observacion.ne("nan"), fallback)
 
     tabla = pd.DataFrame({
