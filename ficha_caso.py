@@ -2,18 +2,21 @@
 Generador de la "Ficha de Caso" individual (7 slides, pptx independiente
 del Reporte de Cartera):
 
-1. Resumen del caso.
-2. Descripción del Siniestro / Materia Asegurada (en blanco, a llenar a mano).
-3. Reserva del caso: valor y desglose extraídos de la planilla base
+1. Resumen del caso (Ficha del Caso).
+2. Descripción del Siniestro / Materia Asegurada (texto libre, en blanco).
+3. Espacio en blanco para Registro Fotográfico (6 fotos, a llenar a mano
+   en PowerPoint una vez descargado el pptx).
+4. Reserva del caso: valor y desglose extraídos de la planilla base
    (Pérdida bruta, Deducible, Monto asegurado, Pérdida neta/Reserva,
    Gastos, Honorarios), con una columna en blanco para que el ajustador
    justifique cada concepto.
-4. Estado Actual del Siniestro (cuadro de texto libre, en blanco).
-5. Próximas Acciones (cuadro de texto libre, en blanco).
-6. Espacio en blanco para Registro Fotográfico (6 fotos, a llenar a mano
-   en PowerPoint una vez descargado el pptx).
-7. Espacio en blanco para el Detalle de Gestiones Realizadas (6 líneas de
-   Fecha + Detalle, también a llenar a mano).
+5. Estado Actual del Siniestro (texto libre, en blanco).
+6. Detalle de Gestiones Realizadas (tabla de 6 filas vacías, Fecha +
+   Detalle, a llenar a mano).
+7. Próximas Acciones (texto libre, en blanco).
+
+Las slides de texto libre (2, 5 y 7) llevan la nota "(Texto libre)"
+dentro del recuadro en blanco.
 
 No usa una plantilla .pptx: arma las slides desde cero con python-pptx,
 reutilizando el mismo logo y paleta de colores (navy + teal) que
@@ -142,7 +145,12 @@ def _caja_manual(slide, left, top, width, height, titulo):
     caja.line.width = Pt(1)
     caja.line.dash_style = MSO_LINE_DASH_STYLE.DASH
     caja.shadow.inherit = False
-    caja.text_frame.paragraphs[0].text = ""
+    tf = caja.text_frame
+    tf.word_wrap = True
+    tf.vertical_anchor = MSO_ANCHOR.TOP
+    p = tf.paragraphs[0]
+    p.text = "(Texto libre)"
+    p.font.size, p.font.italic, p.font.color.rgb = Pt(11), True, RGBColor(0x8A, 0x93, 0x9E)
 
 
 def _slide_descripcion(prs, datos):
@@ -312,7 +320,12 @@ def _slide_texto_libre(prs, datos, titulo):
     caja.line.width = Pt(1)
     caja.line.dash_style = MSO_LINE_DASH_STYLE.DASH
     caja.shadow.inherit = False
-    caja.text_frame.paragraphs[0].text = ""
+    tf = caja.text_frame
+    tf.word_wrap = True
+    tf.vertical_anchor = MSO_ANCHOR.TOP
+    p = tf.paragraphs[0]
+    p.text = "(Texto libre)"
+    p.font.size, p.font.italic, p.font.color.rgb = Pt(11), True, RGBColor(0x8A, 0x93, 0x9E)
     return slide
 
 
@@ -353,11 +366,11 @@ def generar_ficha_pptx(fila):
 
     _slide_resumen(prs, datos)
     _slide_descripcion(prs, datos)
+    _slide_fotos(prs, datos)
     _slide_reserva(prs, datos)
     _slide_texto_libre(prs, datos, "ESTADO ACTUAL DEL SINIESTRO")
-    _slide_texto_libre(prs, datos, "PRÓXIMAS ACCIONES")
-    _slide_fotos(prs, datos)
     _slide_gestiones(prs, datos)
+    _slide_texto_libre(prs, datos, "PRÓXIMAS ACCIONES")
 
     output = io.BytesIO()
     prs.save(output)
