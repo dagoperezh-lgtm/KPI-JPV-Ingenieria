@@ -2,37 +2,68 @@
 PPTX de tendencia: evolución de Stock (Q y UF) y Asignaciones semanales por
 área y total de la gerencia, a partir del histórico armado en
 tablero_historico.py.
+
+Reutiliza el logo y la paleta de colores (navy + teal) de assets/logo_jpv.png
+y ficha_caso.py, para que quede consistente con el resto de los reportes
+del ecosistema JPV (Reporte de Cartera, Ficha de Caso).
 """
 import io
+import os
 
 from pptx import Presentation
 from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
 from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
-from pptx.util import Inches, Pt
+from pptx.util import Emu, Inches, Pt
 
-AZUL = RGBColor(0x1F, 0x38, 0x64)
-AZUL_CLARO = RGBColor(0x4A, 0x7A, 0xB5)
-GRIS = RGBColor(0x59, 0x59, 0x59)
+LOGO_PATH = os.path.join(os.path.dirname(__file__), "assets", "logo_jpv.png")
+
+NAVY_OSCURO = RGBColor(0x0D, 0x1F, 0x38)
+NAVY = RGBColor(0x1B, 0x2A, 0x4A)
+TEAL = RGBColor(0x14, 0xA8, 0xA0)
+TEAL_OSCURO = RGBColor(0x0D, 0x73, 0x77)
+GRIS_TEXTO = RGBColor(0x33, 0x33, 0x33)
+GRIS_CLARO = RGBColor(0xF4, 0xF6, 0xF8)
+BLANCO = RGBColor(0xFF, 0xFF, 0xFF)
 
 ANCHO_SLIDE = Inches(13.333)
 ALTO_SLIDE = Inches(7.5)
+HEADER_ALTO = Inches(1.1)
 
 
-def _slide_titulo(prs, titulo, subtitulo=None):
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    caja = slide.shapes.add_textbox(Inches(0.5), Inches(0.3), ANCHO_SLIDE - Inches(1), Inches(1))
-    tf = caja.text_frame
+def _agregar_header(slide, titulo, subtitulo):
+    barra = slide.shapes.add_shape(1, 0, 0, ANCHO_SLIDE, HEADER_ALTO)
+    barra.fill.solid()
+    barra.fill.fore_color.rgb = NAVY
+    barra.line.fill.background()
+    barra.shadow.inherit = False
+
+    divisor = slide.shapes.add_shape(1, 0, HEADER_ALTO, ANCHO_SLIDE, Emu(45720))
+    divisor.fill.solid()
+    divisor.fill.fore_color.rgb = TEAL_OSCURO
+    divisor.line.fill.background()
+    divisor.shadow.inherit = False
+
+    if os.path.exists(LOGO_PATH):
+        slide.shapes.add_picture(LOGO_PATH, Inches(0.35), Inches(0.2), height=Inches(0.7))
+
+    caja_titulo = slide.shapes.add_textbox(Inches(2.2), Inches(0.18), ANCHO_SLIDE - Inches(2.6), Inches(0.85))
+    tf = caja_titulo.text_frame
     tf.word_wrap = True
-    tf.text = titulo
-    tf.paragraphs[0].font.size = Pt(28)
-    tf.paragraphs[0].font.bold = True
-    tf.paragraphs[0].font.color.rgb = AZUL
+    p = tf.paragraphs[0]
+    p.text = titulo
+    p.font.size, p.font.bold, p.font.color.rgb = Pt(26), True, BLANCO
     if subtitulo:
-        p = tf.add_paragraph()
-        p.text = subtitulo
-        p.font.size = Pt(14)
-        p.font.color.rgb = GRIS
+        p2 = tf.add_paragraph()
+        p2.text = subtitulo
+        p2.font.size, p2.font.italic, p2.font.color.rgb = Pt(13), True, TEAL
+
+
+def _slide_base(prs):
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    fondo = slide.background.fill
+    fondo.solid()
+    fondo.fore_color.rgb = BLANCO
     return slide
 
 
@@ -43,33 +74,39 @@ def _agregar_grafico(slide, tipo, categorias, series, num_format=None):
         cd.add_series(nombre, valores)
 
     grafico_frame = slide.shapes.add_chart(
-        tipo, Inches(0.5), Inches(1.35), ANCHO_SLIDE - Inches(1), ALTO_SLIDE - Inches(1.85), cd
+        tipo, Inches(0.5), HEADER_ALTO + Inches(0.35), ANCHO_SLIDE - Inches(1), ALTO_SLIDE - HEADER_ALTO - Inches(0.85), cd
     )
     chart = grafico_frame.chart
     chart.has_legend = True
     chart.legend.position = XL_LEGEND_POSITION.BOTTOM
     chart.legend.include_in_layout = False
     chart.legend.font.size = Pt(12)
+    chart.legend.font.color.rgb = GRIS_TEXTO
 
     try:
-        chart.category_axis.tick_labels.font.size = Pt(8)
+        eje_cat = chart.category_axis
+        eje_cat.tick_labels.font.size = Pt(8)
+        eje_cat.tick_labels.font.color.rgb = GRIS_TEXTO
     except Exception:
         pass
     try:
         eje_valor = chart.value_axis
         eje_valor.tick_labels.font.size = Pt(10)
+        eje_valor.tick_labels.font.color.rgb = GRIS_TEXTO
         if num_format:
             eje_valor.tick_labels.number_format = num_format
             eje_valor.tick_labels.number_format_is_linked = False
     except Exception:
         pass
 
-    colores = [AZUL, AZUL_CLARO, GRIS]
+    colores = [TEAL, NAVY, TEAL_OSCURO]
     for i, serie in enumerate(chart.series):
         try:
             if tipo in (XL_CHART_TYPE.LINE, XL_CHART_TYPE.LINE_MARKERS):
                 serie.format.line.color.rgb = colores[i % len(colores)]
                 serie.format.line.width = Pt(2.5)
+                serie.marker.format.fill.solid()
+                serie.marker.format.fill.fore_color.rgb = colores[i % len(colores)]
             else:
                 serie.format.fill.solid()
                 serie.format.fill.fore_color.rgb = colores[i % len(colores)]
@@ -97,27 +134,39 @@ def generar_pptx_historico(df_historico):
         return [sub.get(f, None) for f in fechas]
 
     rango = f"{etiquetas[0]} al {etiquetas[-1]} de {fechas[-1].year} · {len(fechas)} semanas"
-    _slide_titulo(prs, "Tablero Gerencial — Evolución Histórica", f"Ingeniería y Equipo Móvil · {rango}")
 
-    slide = _slide_titulo(prs, "Evolución de Stock — Cantidad de Casos (Q)")
+    slide = _slide_base(prs)
+    _agregar_header(slide, "Tablero Gerencial — Evolución Histórica", f"Ingeniería y Equipo Móvil · {rango}")
+    caja = slide.shapes.add_textbox(Inches(0.5), Inches(3), ANCHO_SLIDE - Inches(1), Inches(2))
+    tf = caja.text_frame
+    tf.word_wrap = True
+    p = tf.paragraphs[0]
+    p.text = "JPV Asociados — Ajustadores Especializados"
+    p.font.size, p.font.bold, p.font.color.rgb = Pt(18), True, NAVY
+
+    slide = _slide_base(prs)
+    _agregar_header(slide, "Evolución de Stock — Cantidad de Casos (Q)", None)
     _agregar_grafico(slide, XL_CHART_TYPE.LINE_MARKERS, etiquetas, [
         ("Ingeniería y Energía", serie_de("Ingeniería y Energía", "Stock_Q")),
         ("Equipo Móvil", serie_de("Equipo Móvil", "Stock_Q")),
     ])
 
-    slide = _slide_titulo(prs, "Evolución de Stock — Honorarios (UF)")
+    slide = _slide_base(prs)
+    _agregar_header(slide, "Evolución de Stock — Honorarios (UF)", None)
     _agregar_grafico(slide, XL_CHART_TYPE.LINE_MARKERS, etiquetas, [
         ("Ingeniería y Energía", serie_de("Ingeniería y Energía", "Stock_UF")),
         ("Equipo Móvil", serie_de("Equipo Móvil", "Stock_UF")),
     ], num_format="#,##0")
 
-    slide = _slide_titulo(prs, "Asignaciones Semanales por Área")
+    slide = _slide_base(prs)
+    _agregar_header(slide, "Asignaciones Semanales por Área", None)
     _agregar_grafico(slide, XL_CHART_TYPE.COLUMN_STACKED, etiquetas, [
         ("Ingeniería y Energía", serie_de("Ingeniería y Energía", "Asignados")),
         ("Equipo Móvil", serie_de("Equipo Móvil", "Asignados")),
     ])
 
-    slide = _slide_titulo(prs, "Asignaciones Semanales — Total Gerencia")
+    slide = _slide_base(prs)
+    _agregar_header(slide, "Asignaciones Semanales — Total Gerencia", None)
     _agregar_grafico(slide, XL_CHART_TYPE.COLUMN_CLUSTERED, etiquetas, [
         ("Total Gerencia", serie_de("Total Gerencia", "Asignados")),
     ])
