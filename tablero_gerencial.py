@@ -100,7 +100,7 @@ def _generar_demo():
 # ---------------------------------------------------------
 # SIDEBAR: ESTADO DE CONEXIÓN Y SELECCIÓN DE SEMANA
 # ---------------------------------------------------------
-VERSION_CODIGO = "v15 · 2026-09-09 · PPTX Histórico con logo y colores JPV"
+VERSION_CODIGO = "v16 · 2026-09-09 · Asignaciones: un gráfico por área, cada uno con su escala"
 
 st.sidebar.title("🛠️ Tablero Gerencial")
 st.sidebar.caption("Fuente de datos: OpsControl (Base Maestra + Planes Semanales)")
