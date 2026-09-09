@@ -67,21 +67,36 @@ def _slide_base(prs):
     return slide
 
 
-def _agregar_grafico(slide, tipo, categorias, series, num_format=None):
+def _agregar_titulo_chico(slide, texto, left, top, width):
+    caja = slide.shapes.add_textbox(left, top, width, Inches(0.35))
+    p = caja.text_frame.paragraphs[0]
+    p.text = texto
+    p.font.size, p.font.bold, p.font.color.rgb = Pt(14), True, NAVY
+
+
+def _agregar_grafico(slide, tipo, categorias, series, num_format=None,
+                      left=Inches(0.5), top=None, width=None, height=None,
+                      leyenda=True, color_offset=0):
+    if top is None:
+        top = HEADER_ALTO + Inches(0.35)
+    if width is None:
+        width = ANCHO_SLIDE - Inches(1)
+    if height is None:
+        height = ALTO_SLIDE - HEADER_ALTO - Inches(0.85)
+
     cd = CategoryChartData()
     cd.categories = categorias
     for nombre, valores in series:
         cd.add_series(nombre, valores)
 
-    grafico_frame = slide.shapes.add_chart(
-        tipo, Inches(0.5), HEADER_ALTO + Inches(0.35), ANCHO_SLIDE - Inches(1), ALTO_SLIDE - HEADER_ALTO - Inches(0.85), cd
-    )
+    grafico_frame = slide.shapes.add_chart(tipo, left, top, width, height, cd)
     chart = grafico_frame.chart
-    chart.has_legend = True
-    chart.legend.position = XL_LEGEND_POSITION.BOTTOM
-    chart.legend.include_in_layout = False
-    chart.legend.font.size = Pt(12)
-    chart.legend.font.color.rgb = GRIS_TEXTO
+    chart.has_legend = leyenda
+    if leyenda:
+        chart.legend.position = XL_LEGEND_POSITION.BOTTOM
+        chart.legend.include_in_layout = False
+        chart.legend.font.size = Pt(12)
+        chart.legend.font.color.rgb = GRIS_TEXTO
 
     try:
         eje_cat = chart.category_axis
@@ -101,15 +116,16 @@ def _agregar_grafico(slide, tipo, categorias, series, num_format=None):
 
     colores = [TEAL, NAVY, TEAL_OSCURO]
     for i, serie in enumerate(chart.series):
+        color = colores[(i + color_offset) % len(colores)]
         try:
             if tipo in (XL_CHART_TYPE.LINE, XL_CHART_TYPE.LINE_MARKERS):
-                serie.format.line.color.rgb = colores[i % len(colores)]
+                serie.format.line.color.rgb = color
                 serie.format.line.width = Pt(2.5)
                 serie.marker.format.fill.solid()
-                serie.marker.format.fill.fore_color.rgb = colores[i % len(colores)]
+                serie.marker.format.fill.fore_color.rgb = color
             else:
                 serie.format.fill.solid()
-                serie.format.fill.fore_color.rgb = colores[i % len(colores)]
+                serie.format.fill.fore_color.rgb = color
         except Exception:
             pass
     return chart
@@ -160,10 +176,21 @@ def generar_pptx_historico(df_historico):
 
     slide = _slide_base(prs)
     _agregar_header(slide, "Asignaciones Semanales por Área", None)
-    _agregar_grafico(slide, XL_CHART_TYPE.COLUMN_STACKED, etiquetas, [
+    # Un gráfico por división (no uno combinado): la escala de Ingeniería es
+    # varias veces la de Equipo Móvil, y un solo eje aplanaba su tendencia.
+    mitad = Emu((ANCHO_SLIDE - Inches(1.2)) // 2)
+    top_grafico = HEADER_ALTO + Inches(0.75)
+    alto_grafico = ALTO_SLIDE - top_grafico - Inches(0.4)
+
+    _agregar_titulo_chico(slide, "Ingeniería y Energía", Inches(0.5), HEADER_ALTO + Inches(0.3), mitad)
+    _agregar_grafico(slide, XL_CHART_TYPE.COLUMN_CLUSTERED, etiquetas, [
         ("Ingeniería y Energía", serie_de("Ingeniería y Energía", "Asignados")),
+    ], left=Inches(0.5), top=top_grafico, width=mitad, height=alto_grafico, leyenda=False, color_offset=0)
+
+    _agregar_titulo_chico(slide, "Equipo Móvil", Inches(0.7) + mitad, HEADER_ALTO + Inches(0.3), mitad)
+    _agregar_grafico(slide, XL_CHART_TYPE.COLUMN_CLUSTERED, etiquetas, [
         ("Equipo Móvil", serie_de("Equipo Móvil", "Asignados")),
-    ])
+    ], left=Inches(0.7) + mitad, top=top_grafico, width=mitad, height=alto_grafico, leyenda=False, color_offset=1)
 
     slide = _slide_base(prs)
     _agregar_header(slide, "Asignaciones Semanales — Total Gerencia", None)
