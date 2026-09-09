@@ -100,7 +100,7 @@ def _generar_demo():
 # ---------------------------------------------------------
 # SIDEBAR: ESTADO DE CONEXIÓN Y SELECCIÓN DE SEMANA
 # ---------------------------------------------------------
-VERSION_CODIGO = "v16 · 2026-09-09 · Asignaciones: un gráfico por área, cada uno con su escala"
+VERSION_CODIGO = "v17 · 2026-09-09 · Stock UF también dividido en dos gráficos"
 
 st.sidebar.title("🛠️ Tablero Gerencial")
 st.sidebar.caption("Fuente de datos: OpsControl (Base Maestra + Planes Semanales)")

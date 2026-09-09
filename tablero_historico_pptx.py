@@ -131,6 +131,25 @@ def _agregar_grafico(slide, tipo, categorias, series, num_format=None,
     return chart
 
 
+def _agregar_par_dividido(slide, tipo, etiquetas, serie_ing, serie_movil, num_format=None):
+    """Dos gráficos lado a lado (Ingeniería / Equipo Móvil), cada uno con su
+    propio eje: cuando la escala de una división es varias veces la de la
+    otra, un solo eje combinado aplana la tendencia de la más chica."""
+    mitad = Emu((ANCHO_SLIDE - Inches(1.2)) // 2)
+    top_grafico = HEADER_ALTO + Inches(0.75)
+    alto_grafico = ALTO_SLIDE - top_grafico - Inches(0.4)
+
+    _agregar_titulo_chico(slide, "Ingeniería y Energía", Inches(0.5), HEADER_ALTO + Inches(0.3), mitad)
+    _agregar_grafico(slide, tipo, etiquetas, [("Ingeniería y Energía", serie_ing)],
+                      num_format=num_format, left=Inches(0.5), top=top_grafico, width=mitad, height=alto_grafico,
+                      leyenda=False, color_offset=0)
+
+    _agregar_titulo_chico(slide, "Equipo Móvil", Inches(0.7) + mitad, HEADER_ALTO + Inches(0.3), mitad)
+    _agregar_grafico(slide, tipo, etiquetas, [("Equipo Móvil", serie_movil)],
+                      num_format=num_format, left=Inches(0.7) + mitad, top=top_grafico, width=mitad, height=alto_grafico,
+                      leyenda=False, color_offset=1)
+
+
 def generar_pptx_historico(df_historico):
     """df_historico: salida de tablero_historico.parsear_historico()."""
     if df_historico is None or df_historico.empty:
@@ -169,28 +188,16 @@ def generar_pptx_historico(df_historico):
 
     slide = _slide_base(prs)
     _agregar_header(slide, "Evolución de Stock — Honorarios (UF)", None)
-    _agregar_grafico(slide, XL_CHART_TYPE.LINE_MARKERS, etiquetas, [
-        ("Ingeniería y Energía", serie_de("Ingeniería y Energía", "Stock_UF")),
-        ("Equipo Móvil", serie_de("Equipo Móvil", "Stock_UF")),
-    ], num_format="#,##0")
+    # Un gráfico por división: la escala de Ingeniería en UF es muchas veces
+    # la de Equipo Móvil, y un solo eje combinado aplanaba su tendencia.
+    _agregar_par_dividido(slide, XL_CHART_TYPE.LINE_MARKERS, etiquetas,
+                           serie_de("Ingeniería y Energía", "Stock_UF"), serie_de("Equipo Móvil", "Stock_UF"),
+                           num_format="#,##0")
 
     slide = _slide_base(prs)
     _agregar_header(slide, "Asignaciones Semanales por Área", None)
-    # Un gráfico por división (no uno combinado): la escala de Ingeniería es
-    # varias veces la de Equipo Móvil, y un solo eje aplanaba su tendencia.
-    mitad = Emu((ANCHO_SLIDE - Inches(1.2)) // 2)
-    top_grafico = HEADER_ALTO + Inches(0.75)
-    alto_grafico = ALTO_SLIDE - top_grafico - Inches(0.4)
-
-    _agregar_titulo_chico(slide, "Ingeniería y Energía", Inches(0.5), HEADER_ALTO + Inches(0.3), mitad)
-    _agregar_grafico(slide, XL_CHART_TYPE.COLUMN_CLUSTERED, etiquetas, [
-        ("Ingeniería y Energía", serie_de("Ingeniería y Energía", "Asignados")),
-    ], left=Inches(0.5), top=top_grafico, width=mitad, height=alto_grafico, leyenda=False, color_offset=0)
-
-    _agregar_titulo_chico(slide, "Equipo Móvil", Inches(0.7) + mitad, HEADER_ALTO + Inches(0.3), mitad)
-    _agregar_grafico(slide, XL_CHART_TYPE.COLUMN_CLUSTERED, etiquetas, [
-        ("Equipo Móvil", serie_de("Equipo Móvil", "Asignados")),
-    ], left=Inches(0.7) + mitad, top=top_grafico, width=mitad, height=alto_grafico, leyenda=False, color_offset=1)
+    _agregar_par_dividido(slide, XL_CHART_TYPE.COLUMN_CLUSTERED, etiquetas,
+                           serie_de("Ingeniería y Energía", "Asignados"), serie_de("Equipo Móvil", "Asignados"))
 
     slide = _slide_base(prs)
     _agregar_header(slide, "Asignaciones Semanales — Total Gerencia", None)
