@@ -180,6 +180,18 @@ def generar_pptx_historico(df_historico):
     p.font.size, p.font.bold, p.font.color.rgb = Pt(18), True, NAVY
 
     slide = _slide_base(prs)
+    _agregar_header(slide, "Evolución de Stock — Honorarios (UF)", "Total Gerencia")
+    _agregar_grafico(slide, XL_CHART_TYPE.LINE_MARKERS, etiquetas, [
+        ("Total Gerencia", serie_de("Total Gerencia", "Stock_UF")),
+    ], num_format="#,##0", color_offset=2)
+
+    slide = _slide_base(prs)
+    _agregar_header(slide, "Evolución de Stock — Cantidad de Casos (Q)", "Total Gerencia")
+    _agregar_grafico(slide, XL_CHART_TYPE.LINE_MARKERS, etiquetas, [
+        ("Total Gerencia", serie_de("Total Gerencia", "Stock_Q")),
+    ], color_offset=2)
+
+    slide = _slide_base(prs)
     _agregar_header(slide, "Evolución de Stock — Cantidad de Casos (Q)", None)
     _agregar_grafico(slide, XL_CHART_TYPE.LINE_MARKERS, etiquetas, [
         ("Ingeniería y Energía", serie_de("Ingeniería y Energía", "Stock_Q")),
