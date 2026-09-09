@@ -20,6 +20,8 @@ import streamlit as st
 import tablero_calculo as calc
 import tablero_datos as datos
 import tablero_excel
+import tablero_historico
+import tablero_historico_pptx
 import tablero_metas as metas_mod
 import tablero_snapshots as snap
 
@@ -98,7 +100,7 @@ def _generar_demo():
 # ---------------------------------------------------------
 # SIDEBAR: ESTADO DE CONEXIÓN Y SELECCIÓN DE SEMANA
 # ---------------------------------------------------------
-VERSION_CODIGO = "v13 · 2026-07-17 · solo entregables cuentan como Ajuste/IFL"
+VERSION_CODIGO = "v14 · 2026-09-09 · pestaña Histórico: PPTX de evolución de Stock y Asignaciones"
 
 st.sidebar.title("🛠️ Tablero Gerencial")
 st.sidebar.caption("Fuente de datos: OpsControl (Base Maestra + Planes Semanales)")
@@ -138,8 +140,8 @@ metas_por_tramo_dict = metas_mod.metas_por_tramo_como_dict(metas)
 st.title("🛠️ Tablero Gerencial — Ingeniería y Equipo Móvil")
 st.caption(f"Semana actual: {datos.rango_semana_legible(offset_semana, hoy)}  ·  Semana anterior: {datos.rango_semana_legible(offset_semana - 1, hoy)}")
 
-tab_grilla, tab_avance, tab_top5, tab_comercial, tab_metas = st.tabs([
-    "📋 Grilla Semanal", "📈 Avance Producción / Meta", "🏆 Top 5", "🤝 Gestión Comercial", "🎯 Configurar Metas",
+tab_grilla, tab_avance, tab_top5, tab_comercial, tab_historico, tab_metas = st.tabs([
+    "📋 Grilla Semanal", "📈 Avance Producción / Meta", "🏆 Top 5", "🤝 Gestión Comercial", "📊 Histórico", "🎯 Configurar Metas",
 ])
 
 
@@ -291,6 +293,52 @@ with tab_comercial:
         st.info("Sin gestiones comerciales registradas esta semana.")
     else:
         st.dataframe(bitacora, use_container_width=True, hide_index=True)
+
+
+# ---------------------------------------------------------
+# TAB: HISTÓRICO — evolución de Stock y Asignaciones desde el Tablero manual
+# ---------------------------------------------------------
+with tab_historico:
+    st.subheader("Evolución histórica del Tablero")
+    st.caption(
+        "Carga el Excel del Tablero manual (TABLERO_ING), el que trae una hoja por semana (\"Tablero DDMMYYYY\"). "
+        "Se lee el subtotal de cada división en cada hoja y se arma un PPTX con la evolución de Stock (cantidad de "
+        "casos y UF) y las asignaciones semanales por área y el total de la gerencia."
+    )
+    archivo_historico = st.file_uploader("Tablero manual (.xlsx, con una hoja por semana)", type=["xlsx"], key="uploader_historico")
+
+    if archivo_historico is not None:
+        try:
+            df_historico = tablero_historico.parsear_historico(archivo_historico)
+        except Exception as e:
+            st.error(f"No se pudo leer el archivo: {e}")
+            df_historico = None
+
+        if df_historico is not None and not df_historico.empty:
+            fechas_disponibles = sorted(df_historico["Fecha"].unique())
+            st.success(f"Se leyeron {len(fechas_disponibles)} semanas ({fechas_disponibles[0].strftime('%d-%m-%Y')} a {fechas_disponibles[-1].strftime('%d-%m-%Y')}).")
+
+            c1, c2 = st.columns(2)
+            fecha_desde = c1.date_input("Desde", value=fechas_disponibles[0], min_value=fechas_disponibles[0], max_value=fechas_disponibles[-1])
+            fecha_hasta = c2.date_input("Hasta", value=fechas_disponibles[-1], min_value=fechas_disponibles[0], max_value=fechas_disponibles[-1])
+            df_filtrado = df_historico[(df_historico["Fecha"] >= fecha_desde) & (df_historico["Fecha"] <= fecha_hasta)]
+
+            st.dataframe(
+                df_filtrado.rename(columns={"Fecha": "Semana", "Stock_Q": "Stock (Q)", "Stock_UF": "Stock (UF)"}),
+                use_container_width=True, hide_index=True,
+            )
+
+            if df_filtrado.empty:
+                st.info("No hay semanas en ese rango.")
+            else:
+                pptx_bytes = tablero_historico_pptx.generar_pptx_historico(df_filtrado)
+                st.download_button(
+                    "📥 Descargar PPTX (Evolución Histórica)", data=pptx_bytes,
+                    file_name=f"Tablero_Evolucion_{fecha_desde.strftime('%Y%m%d')}_{fecha_hasta.strftime('%Y%m%d')}.pptx",
+                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                )
+        elif df_historico is not None:
+            st.warning("No se encontró ninguna hoja con el formato esperado ('Tablero DDMMYYYY') en ese archivo.")
 
 
 # ---------------------------------------------------------
