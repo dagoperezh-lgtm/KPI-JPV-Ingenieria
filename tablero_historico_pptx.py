@@ -266,6 +266,12 @@ def generar_pptx_historico(df_historico, df_promedio=None):
                            serie_de("Ingeniería y Energía", "IFL_UF"), serie_de("Equipo Móvil", "IFL_UF"),
                            num_format="#,##0")
 
+    slide = _slide_base(prs)
+    _agregar_header(slide, "IFL Emitidos — Total Gerencia", "Honorarios (UF)")
+    _agregar_grafico(slide, XL_CHART_TYPE.LINE_MARKERS, etiquetas, [
+        ("Total Gerencia", serie_de("Total Gerencia", "IFL_UF")),
+    ], num_format="#,##0", leyenda=False, color_offset=2)
+
     if df_promedio is not None and not df_promedio.empty:
         fechas_prom = sorted(df_promedio["Fecha"].unique())
         etiquetas_prom = [f"{f.day:02d}-{MESES_ES[f.month]}" for f in fechas_prom]
