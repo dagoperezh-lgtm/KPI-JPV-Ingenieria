@@ -154,6 +154,25 @@ MESES_ES = {1: "ene", 2: "feb", 3: "mar", 4: "abr", 5: "may", 6: "jun",
             7: "jul", 8: "ago", 9: "sep", 10: "oct", 11: "nov", 12: "dic"}
 
 
+def _promedio_semanal_y_percapita(df_historico, df_promedio, columna, fechas):
+    """(promedio semanal total, promedio semanal por ajustador vigente) de
+    `columna` para 'Total Gerencia' en el rango `fechas`. El per-cápita se
+    calcula semana a semana (valor de la semana / ajustadores vigentes esa
+    semana, excluyendo a Dagoberto Pérez) y luego se promedia — no divide el
+    promedio total por el promedio de ajustadores."""
+    sub_valor = df_historico[df_historico["Division"] == "Total Gerencia"].set_index("Fecha")[columna]
+    valores = [sub_valor.get(f) for f in fechas]
+    valores_validos = [v for v in valores if v is not None]
+    promedio_total = sum(valores_validos) / len(valores_validos) if valores_validos else None
+
+    promedio_percapita = None
+    if df_promedio is not None and not df_promedio.empty:
+        sub_n = df_promedio[df_promedio["Division"] == "Total Gerencia"].set_index("Fecha")["N_Ajustadores"]
+        razones = [v / sub_n[f] for f, v in zip(fechas, valores) if v is not None and sub_n.get(f)]
+        promedio_percapita = sum(razones) / len(razones) if razones else None
+    return promedio_total, promedio_percapita
+
+
 def generar_pptx_historico(df_historico, df_promedio=None):
     """df_historico: salida de tablero_historico.parsear_historico().
     df_promedio: salida opcional de
@@ -220,7 +239,7 @@ def generar_pptx_historico(df_historico, df_promedio=None):
     _agregar_header(slide, "Asignaciones Semanales — Total Gerencia", None)
     _agregar_grafico(slide, XL_CHART_TYPE.COLUMN_CLUSTERED, etiquetas, [
         ("Total Gerencia", serie_de("Total Gerencia", "Asignados")),
-    ])
+    ], leyenda=False)
 
     slide = _slide_base(prs)
     _agregar_header(slide, "IFL Emitidos — Cantidad de Casos", None)
@@ -230,7 +249,13 @@ def generar_pptx_historico(df_historico, df_promedio=None):
     ])
 
     slide = _slide_base(prs)
-    _agregar_header(slide, "IFL Emitidos — Honorarios (UF)", None)
+    promedio_total, promedio_percapita = _promedio_semanal_y_percapita(df_historico, df_promedio, "IFL_UF", fechas)
+    partes_subtitulo = []
+    if promedio_total is not None:
+        partes_subtitulo.append(f"Promedio semanal: {promedio_total:,.0f} UF")
+    if promedio_percapita is not None:
+        partes_subtitulo.append(f"{promedio_percapita:,.0f} UF por ajustador vigente")
+    _agregar_header(slide, "IFL Emitidos — Honorarios (UF)", " · ".join(partes_subtitulo) or None)
     # Un gráfico por división: la escala de Ingeniería en UF es muchas veces
     # la de Equipo Móvil, igual que en Stock UF.
     _agregar_par_dividido(slide, XL_CHART_TYPE.COLUMN_CLUSTERED, etiquetas,

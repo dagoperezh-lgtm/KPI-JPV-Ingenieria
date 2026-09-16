@@ -100,7 +100,7 @@ def _generar_demo():
 # ---------------------------------------------------------
 # SIDEBAR: ESTADO DE CONEXIÓN Y SELECCIÓN DE SEMANA
 # ---------------------------------------------------------
-VERSION_CODIGO = "v20 · 2026-09-16 · slides de IFL emitidos (cantidad y UF) por área"
+VERSION_CODIGO = "v21 · 2026-09-16 · quita leyenda redundante y agrega promedios a IFL UF"
 
 st.sidebar.title("🛠️ Tablero Gerencial")
 st.sidebar.caption("Fuente de datos: OpsControl (Base Maestra + Planes Semanales)")
