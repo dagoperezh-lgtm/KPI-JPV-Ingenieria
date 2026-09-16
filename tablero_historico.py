@@ -20,6 +20,8 @@ COL_AJUSTADOR = 4
 COL_ASIGNADOS = 5
 COL_Q = 6
 COL_HON_UF = 9
+COL_IFL_QR = 18
+COL_IFL_HONRUF = 19
 
 RE_SHEET_FECHA = re.compile(r"(\d{2})(\d{2})(\d{4})")
 
@@ -68,7 +70,7 @@ def _extraer_fila(df, prefijo_etiqueta):
     fila = candidatos[-1]
 
     valores = []
-    for c in (COL_ASIGNADOS, COL_Q, COL_HON_UF):
+    for c in (COL_ASIGNADOS, COL_Q, COL_HON_UF, COL_IFL_QR, COL_IFL_HONRUF):
         v = pd.to_numeric(df.iloc[fila, c], errors="coerce")
         valores.append(0.0 if pd.isna(v) else float(v))
     return valores
@@ -77,8 +79,10 @@ def _extraer_fila(df, prefijo_etiqueta):
 def parsear_historico(archivo):
     """`archivo`: ruta o file-like (.xlsx) con una hoja 'Tablero DDMMYYYY'
     por semana. Devuelve un DataFrame con columnas Fecha/Division/Asignados/
-    Stock_Q/Stock_UF — una fila por (semana, división), más una fila
-    'Total Gerencia' por semana. Ordenado cronológicamente."""
+    Stock_Q/Stock_UF/IFL_Q/IFL_UF (IFL_Q/IFL_UF = informes finales de
+    liquidación REALIZADOS esa semana, cantidad y honorarios) — una fila por
+    (semana, división), más una fila 'Total Gerencia' por semana. Ordenado
+    cronológicamente."""
     xl = pd.ExcelFile(archivo)
     filas = []
     for nombre_hoja in xl.sheet_names:
@@ -86,7 +90,7 @@ def parsear_historico(archivo):
         if fecha is None:
             continue
         df = pd.read_excel(xl, sheet_name=nombre_hoja, header=None)
-        if df.shape[1] <= COL_HON_UF:
+        if df.shape[1] <= COL_IFL_HONRUF:
             continue
 
         for etiqueta, prefijo in [
@@ -100,9 +104,10 @@ def parsear_historico(archivo):
             filas.append({
                 "Fecha": fecha, "Division": etiqueta,
                 "Asignados": valores[0], "Stock_Q": valores[1], "Stock_UF": round(valores[2], 2),
+                "IFL_Q": valores[3], "IFL_UF": round(valores[4], 2),
             })
 
-    columnas = ["Fecha", "Division", "Asignados", "Stock_Q", "Stock_UF"]
+    columnas = ["Fecha", "Division", "Asignados", "Stock_Q", "Stock_UF", "IFL_Q", "IFL_UF"]
     if not filas:
         return pd.DataFrame(columns=columnas)
     return pd.DataFrame(filas)[columnas].sort_values("Fecha").reset_index(drop=True)

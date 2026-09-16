@@ -222,6 +222,21 @@ def generar_pptx_historico(df_historico, df_promedio=None):
         ("Total Gerencia", serie_de("Total Gerencia", "Asignados")),
     ])
 
+    slide = _slide_base(prs)
+    _agregar_header(slide, "IFL Emitidos — Cantidad de Casos", None)
+    _agregar_grafico(slide, XL_CHART_TYPE.COLUMN_CLUSTERED, etiquetas, [
+        ("Ingeniería y Energía", serie_de("Ingeniería y Energía", "IFL_Q")),
+        ("Equipo Móvil", serie_de("Equipo Móvil", "IFL_Q")),
+    ])
+
+    slide = _slide_base(prs)
+    _agregar_header(slide, "IFL Emitidos — Honorarios (UF)", None)
+    # Un gráfico por división: la escala de Ingeniería en UF es muchas veces
+    # la de Equipo Móvil, igual que en Stock UF.
+    _agregar_par_dividido(slide, XL_CHART_TYPE.COLUMN_CLUSTERED, etiquetas,
+                           serie_de("Ingeniería y Energía", "IFL_UF"), serie_de("Equipo Móvil", "IFL_UF"),
+                           num_format="#,##0")
+
     if df_promedio is not None and not df_promedio.empty:
         fechas_prom = sorted(df_promedio["Fecha"].unique())
         etiquetas_prom = [f"{f.day:02d}-{MESES_ES[f.month]}" for f in fechas_prom]

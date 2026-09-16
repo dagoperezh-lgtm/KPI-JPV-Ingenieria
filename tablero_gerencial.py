@@ -100,7 +100,7 @@ def _generar_demo():
 # ---------------------------------------------------------
 # SIDEBAR: ESTADO DE CONEXIÓN Y SELECCIÓN DE SEMANA
 # ---------------------------------------------------------
-VERSION_CODIGO = "v19 · 2026-09-16 · Stock promedio por ajustador (excluye a Dagoberto)"
+VERSION_CODIGO = "v20 · 2026-09-16 · slides de IFL emitidos (cantidad y UF) por área"
 
 st.sidebar.title("🛠️ Tablero Gerencial")
 st.sidebar.caption("Fuente de datos: OpsControl (Base Maestra + Planes Semanales)")
@@ -303,7 +303,8 @@ with tab_historico:
     st.caption(
         "Carga el Excel del Tablero manual (TABLERO_ING), el que trae una hoja por semana (\"Tablero DDMMYYYY\"). "
         "Se lee el subtotal de cada división en cada hoja y se arma un PPTX con la evolución de Stock (cantidad de "
-        "casos y UF) y las asignaciones semanales por área y el total de la gerencia."
+        "casos y UF), las asignaciones semanales por área y el total de la gerencia, los IFL emitidos (cantidad y "
+        "UF) y el Stock promedio por ajustador."
     )
     archivo_historico = st.file_uploader("Tablero manual (.xlsx, con una hoja por semana)", type=["xlsx"], key="uploader_historico")
 
