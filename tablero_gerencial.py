@@ -100,7 +100,7 @@ def _generar_demo():
 # ---------------------------------------------------------
 # SIDEBAR: ESTADO DE CONEXIÓN Y SELECCIÓN DE SEMANA
 # ---------------------------------------------------------
-VERSION_CODIGO = "v18 · 2026-09-09 · nuevas slides de Stock Total Gerencia (sin desagregar)"
+VERSION_CODIGO = "v19 · 2026-09-16 · Stock promedio por ajustador (excluye a Dagoberto)"
 
 st.sidebar.title("🛠️ Tablero Gerencial")
 st.sidebar.caption("Fuente de datos: OpsControl (Base Maestra + Planes Semanales)")
@@ -310,9 +310,11 @@ with tab_historico:
     if archivo_historico is not None:
         try:
             df_historico = tablero_historico.parsear_historico(archivo_historico)
+            archivo_historico.seek(0)
+            df_promedio = tablero_historico.parsear_promedio_casos_por_ajustador(archivo_historico)
         except Exception as e:
             st.error(f"No se pudo leer el archivo: {e}")
-            df_historico = None
+            df_historico, df_promedio = None, None
 
         if df_historico is not None and not df_historico.empty:
             fechas_disponibles = sorted(df_historico["Fecha"].unique())
@@ -322,16 +324,22 @@ with tab_historico:
             fecha_desde = c1.date_input("Desde", value=fechas_disponibles[0], min_value=fechas_disponibles[0], max_value=fechas_disponibles[-1])
             fecha_hasta = c2.date_input("Hasta", value=fechas_disponibles[-1], min_value=fechas_disponibles[0], max_value=fechas_disponibles[-1])
             df_filtrado = df_historico[(df_historico["Fecha"] >= fecha_desde) & (df_historico["Fecha"] <= fecha_hasta)]
+            df_promedio_filtrado = df_promedio[(df_promedio["Fecha"] >= fecha_desde) & (df_promedio["Fecha"] <= fecha_hasta)] if df_promedio is not None else None
 
             st.dataframe(
                 df_filtrado.rename(columns={"Fecha": "Semana", "Stock_Q": "Stock (Q)", "Stock_UF": "Stock (UF)"}),
                 use_container_width=True, hide_index=True,
             )
+            with st.expander("Stock promedio por ajustador (excluye a Dagoberto Pérez)"):
+                st.dataframe(
+                    df_promedio_filtrado.rename(columns={"Fecha": "Semana", "Promedio_Q": "Promedio Stock (Q)", "N_Ajustadores": "N° ajustadores"}),
+                    use_container_width=True, hide_index=True,
+                )
 
             if df_filtrado.empty:
                 st.info("No hay semanas en ese rango.")
             else:
-                pptx_bytes = tablero_historico_pptx.generar_pptx_historico(df_filtrado)
+                pptx_bytes = tablero_historico_pptx.generar_pptx_historico(df_filtrado, df_promedio_filtrado)
                 st.download_button(
                     "📥 Descargar PPTX (Evolución Histórica)", data=pptx_bytes,
                     file_name=f"Tablero_Evolucion_{fecha_desde.strftime('%Y%m%d')}_{fecha_hasta.strftime('%Y%m%d')}.pptx",
