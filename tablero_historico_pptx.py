@@ -243,10 +243,14 @@ def generar_pptx_historico(df_historico, df_promedio=None):
 
     slide = _slide_base(prs)
     _agregar_header(slide, "IFL Emitidos — Cantidad de Casos", None)
-    _agregar_grafico(slide, XL_CHART_TYPE.COLUMN_CLUSTERED, etiquetas, [
-        ("Ingeniería y Energía", serie_de("Ingeniería y Energía", "IFL_Q")),
-        ("Equipo Móvil", serie_de("Equipo Móvil", "IFL_Q")),
-    ])
+    _agregar_par_dividido(slide, XL_CHART_TYPE.COLUMN_CLUSTERED, etiquetas,
+                           serie_de("Ingeniería y Energía", "IFL_Q"), serie_de("Equipo Móvil", "IFL_Q"))
+
+    slide = _slide_base(prs)
+    _agregar_header(slide, "IFL Emitidos — Total Gerencia", "Cantidad de Casos")
+    _agregar_grafico(slide, XL_CHART_TYPE.LINE_MARKERS, etiquetas, [
+        ("Total Gerencia", serie_de("Total Gerencia", "IFL_Q")),
+    ], leyenda=False, color_offset=2)
 
     slide = _slide_base(prs)
     promedio_total, promedio_percapita = _promedio_semanal_y_percapita(df_historico, df_promedio, "IFL_UF", fechas)
