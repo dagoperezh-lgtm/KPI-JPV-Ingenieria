@@ -150,8 +150,15 @@ def _agregar_par_dividido(slide, tipo, etiquetas, serie_ing, serie_movil, num_fo
                       leyenda=False, color_offset=1)
 
 
-def generar_pptx_historico(df_historico):
-    """df_historico: salida de tablero_historico.parsear_historico()."""
+MESES_ES = {1: "ene", 2: "feb", 3: "mar", 4: "abr", 5: "may", 6: "jun",
+            7: "jul", 8: "ago", 9: "sep", 10: "oct", 11: "nov", 12: "dic"}
+
+
+def generar_pptx_historico(df_historico, df_promedio=None):
+    """df_historico: salida de tablero_historico.parsear_historico().
+    df_promedio: salida opcional de
+    tablero_historico.parsear_promedio_casos_por_ajustador() — si se pasa,
+    agrega una slide con la evolución del Stock (Q) promedio por ajustador."""
     if df_historico is None or df_historico.empty:
         raise ValueError("No hay datos históricos para generar el PPTX.")
 
@@ -160,9 +167,7 @@ def generar_pptx_historico(df_historico):
     prs.slide_height = ALTO_SLIDE
 
     fechas = sorted(df_historico["Fecha"].unique())
-    meses_es = {1: "ene", 2: "feb", 3: "mar", 4: "abr", 5: "may", 6: "jun",
-                7: "jul", 8: "ago", 9: "sep", 10: "oct", 11: "nov", 12: "dic"}
-    etiquetas = [f"{f.day:02d}-{meses_es[f.month]}" for f in fechas]
+    etiquetas = [f"{f.day:02d}-{MESES_ES[f.month]}" for f in fechas]
 
     def serie_de(division, columna):
         sub = df_historico[df_historico["Division"] == division].set_index("Fecha")[columna]
@@ -216,6 +221,21 @@ def generar_pptx_historico(df_historico):
     _agregar_grafico(slide, XL_CHART_TYPE.COLUMN_CLUSTERED, etiquetas, [
         ("Total Gerencia", serie_de("Total Gerencia", "Asignados")),
     ])
+
+    if df_promedio is not None and not df_promedio.empty:
+        fechas_prom = sorted(df_promedio["Fecha"].unique())
+        etiquetas_prom = [f"{f.day:02d}-{MESES_ES[f.month]}" for f in fechas_prom]
+
+        def serie_promedio(division):
+            sub = df_promedio[df_promedio["Division"] == division].set_index("Fecha")["Promedio_Q"]
+            return [sub.get(f, None) for f in fechas_prom]
+
+        slide = _slide_base(prs)
+        _agregar_header(slide, "Stock Promedio por Ajustador", "Excluye a Dagoberto Pérez (carga no representativa)")
+        _agregar_grafico(slide, XL_CHART_TYPE.LINE_MARKERS, etiquetas_prom, [
+            ("Ingeniería y Energía", serie_promedio("Ingeniería y Energía")),
+            ("Equipo Móvil", serie_promedio("Equipo Móvil")),
+        ])
 
     buffer = io.BytesIO()
     prs.save(buffer)
