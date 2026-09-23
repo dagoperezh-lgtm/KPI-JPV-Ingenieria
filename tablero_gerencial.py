@@ -100,7 +100,7 @@ def _generar_demo():
 # ---------------------------------------------------------
 # SIDEBAR: ESTADO DE CONEXIÓN Y SELECCIÓN DE SEMANA
 # ---------------------------------------------------------
-VERSION_CODIGO = "v23 · 2026-09-16 · slide de línea Total Gerencia también para IFL UF"
+VERSION_CODIGO = "v24 · 2026-09-23 · slides de Ingresos vs Egresos (Asignaciones vs IFL)"
 
 st.sidebar.title("🛠️ Tablero Gerencial")
 st.sidebar.caption("Fuente de datos: OpsControl (Base Maestra + Planes Semanales)")

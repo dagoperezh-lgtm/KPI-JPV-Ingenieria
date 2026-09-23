@@ -150,6 +150,25 @@ def _agregar_par_dividido(slide, tipo, etiquetas, serie_ing, serie_movil, num_fo
                       leyenda=False, color_offset=1)
 
 
+def _agregar_par_dividido_multiserie(slide, tipo, etiquetas, series_ing, series_mov, num_format=None):
+    """Dos gráficos lado a lado (Ingeniería / Equipo Móvil), cada uno con
+    VARIAS series (ej. Asignaciones vs IFL dentro de la misma área) — a
+    diferencia de _agregar_par_dividido, aquí sí hace falta leyenda porque
+    cada gráfico tiene más de una serie que distinguir.
+    series_ing / series_mov: [(nombre, valores), ...]."""
+    mitad = Emu((ANCHO_SLIDE - Inches(1.2)) // 2)
+    top_grafico = HEADER_ALTO + Inches(0.75)
+    alto_grafico = ALTO_SLIDE - top_grafico - Inches(0.4)
+
+    _agregar_titulo_chico(slide, "Ingeniería y Energía", Inches(0.5), HEADER_ALTO + Inches(0.3), mitad)
+    _agregar_grafico(slide, tipo, etiquetas, series_ing, num_format=num_format,
+                      left=Inches(0.5), top=top_grafico, width=mitad, height=alto_grafico)
+
+    _agregar_titulo_chico(slide, "Equipo Móvil", Inches(0.7) + mitad, HEADER_ALTO + Inches(0.3), mitad)
+    _agregar_grafico(slide, tipo, etiquetas, series_mov, num_format=num_format,
+                      left=Inches(0.7) + mitad, top=top_grafico, width=mitad, height=alto_grafico)
+
+
 MESES_ES = {1: "ene", 2: "feb", 3: "mar", 4: "abr", 5: "may", 6: "jun",
             7: "jul", 8: "ago", 9: "sep", 10: "oct", 11: "nov", 12: "dic"}
 
@@ -271,6 +290,23 @@ def generar_pptx_historico(df_historico, df_promedio=None):
     _agregar_grafico(slide, XL_CHART_TYPE.LINE_MARKERS, etiquetas, [
         ("Total Gerencia", serie_de("Total Gerencia", "IFL_UF")),
     ], num_format="#,##0", leyenda=False, color_offset=2)
+
+    slide = _slide_base(prs)
+    _agregar_header(slide, "Ingresos vs Egresos — Total Gerencia", "Asignaciones (ingresos) vs IFL Emitidos (egresos)")
+    _agregar_grafico(slide, XL_CHART_TYPE.LINE_MARKERS, etiquetas, [
+        ("Asignaciones (ingresos)", serie_de("Total Gerencia", "Asignados")),
+        ("IFL Emitidos (egresos)", serie_de("Total Gerencia", "IFL_Q")),
+    ])
+
+    slide = _slide_base(prs)
+    _agregar_header(slide, "Ingresos vs Egresos por Área", "Asignaciones (ingresos) vs IFL Emitidos (egresos)")
+    _agregar_par_dividido_multiserie(slide, XL_CHART_TYPE.LINE_MARKERS, etiquetas, [
+        ("Asignaciones (ingresos)", serie_de("Ingeniería y Energía", "Asignados")),
+        ("IFL Emitidos (egresos)", serie_de("Ingeniería y Energía", "IFL_Q")),
+    ], [
+        ("Asignaciones (ingresos)", serie_de("Equipo Móvil", "Asignados")),
+        ("IFL Emitidos (egresos)", serie_de("Equipo Móvil", "IFL_Q")),
+    ])
 
     if df_promedio is not None and not df_promedio.empty:
         fechas_prom = sorted(df_promedio["Fecha"].unique())
