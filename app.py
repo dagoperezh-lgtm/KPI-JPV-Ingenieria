@@ -333,10 +333,16 @@ def renderizar_editor_y_pptx(df_filtrado, titulo_sugerido, titulo_key, key_prefi
     )
 
     if st.button("🎯 Generar PPTX", use_container_width=True, key=f"{key_prefix}_btn_generar"):
+        # El data_editor de arriba solo muestra/edita un subconjunto de columnas;
+        # Corredora/Aseguradora/Honorarios (no editables, no mostradas) se
+        # recuperan de tabla_base por N° de Caso antes de generar el pptx.
+        tabla_completa = pd.DataFrame(tabla_editada).merge(
+            tabla_base[["Caso", "Corredora", "Aseguradora", "Honorarios"]], on="Caso", how="left"
+        )
         pptx_bytes = reporte_cartera.generar_pptx(
             fecha_corte_reporte,
             titulo_cartera,
-            pd.DataFrame(tabla_editada),
+            tabla_completa,
             pasos,
             alerta_prioritaria,
         )

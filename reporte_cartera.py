@@ -17,6 +17,7 @@ import pandas as pd
 from pptx import Presentation
 from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
+from pptx.enum.chart import XL_CHART_TYPE
 from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
@@ -235,6 +236,9 @@ def preparar_tabla_casos(df_pipeline_filtrado, fecha_corte):
         ("Observaciones", ""),
         ("Contenido último movimiento", ""),
         ("División", "Sin División"),
+        ("Corredora", "Sin corredora"),
+        ("Compañía de seguros", "Sin aseguradora"),
+        ("Honorarios (UF)", 0),
     ]:
         if col not in df.columns:
             df[col] = default
@@ -280,6 +284,9 @@ def preparar_tabla_casos(df_pipeline_filtrado, fecha_corte):
         "Observacion_sugerida": observacion_final,
         "Prob": prob,
         "Observacion": observacion_final,
+        "Corredora": df["Corredora"].astype(str).str.strip(),
+        "Aseguradora": df["Compañía de seguros"].astype(str).str.strip(),
+        "Honorarios": pd.to_numeric(df["Honorarios (UF)"], errors="coerce").fillna(0),
     })
     return tabla.sort_values("Dias", ascending=False).reset_index(drop=True)
 
@@ -317,6 +324,12 @@ def calcular_kpis(tabla):
         top4.append(("—", 0))
     aseg_otros = int(top_aseg.iloc[4:].sum())
 
+    # Top 5 por Asegurado / Corredor / Aseguradora (solo se usan en el reporte
+    # de Cartera General, en una slide independiente con 3 gráficos nativos).
+    top5_asegurado = list(top_aseg.head(5).items())
+    top5_corredor = list(tabla.groupby("Corredora").size().sort_values(ascending=False).head(5).items())
+    top5_aseguradora = list(tabla.groupby("Aseguradora").size().sort_values(ascending=False).head(5).items())
+
     dias_max = int(tabla["Dias"].max()) if total else 0
     dias_prom = round(tabla["Dias"].mean()) if total else 0
     dias_600 = int((tabla["Dias"] > 600).sum())
@@ -329,6 +342,18 @@ def calcular_kpis(tabla):
         0: int((prob < 25).sum()),
     }
 
+    # Mismos tramos de probabilidad 2026, pero acotados a los casos MCL (para
+    # la slide "Casos MCL por Probabilidad de Cierre 2026", solo Cartera General).
+    mcl_prob = pd.to_numeric(mcl["Prob"], errors="coerce").fillna(100)
+    tier_masks_mcl = {
+        100: mcl_prob >= 90,
+        75: (mcl_prob >= 60) & (mcl_prob < 90),
+        50: (mcl_prob >= 25) & (mcl_prob < 60),
+        0: mcl_prob < 25,
+    }
+    mcl_tier_counts = {tier: int(mask.sum()) for tier, mask in tier_masks_mcl.items()}
+    mcl_tier_honorarios = {tier: float(mcl.loc[mask, "Honorarios"].sum()) for tier, mask in tier_masks_mcl.items()}
+
     return dict(
         total=total, uf_count=uf_count, usd_count=usd_count,
         uf_total=uf_total, usd_total=usd_total,
@@ -337,8 +362,10 @@ def calcular_kpis(tabla):
         mcl_pct=mcl_pct, otros_pct=otros_pct,
         mcl_uf=mcl_uf, mcl_usd=mcl_usd, otros_uf=otros_uf, otros_usd=otros_usd,
         top4=top4, aseg_otros=aseg_otros,
+        top5_asegurado=top5_asegurado, top5_corredor=top5_corredor, top5_aseguradora=top5_aseguradora,
         dias_max=dias_max, dias_prom=dias_prom, dias_600=dias_600,
         tier_counts=tier_counts,
+        mcl_tier_counts=mcl_tier_counts, mcl_tier_honorarios=mcl_tier_honorarios,
     )
 
 
@@ -397,6 +424,17 @@ _TABLA_DETALLE_COLS = [
     ("Días", Inches(0.5), 6),
     ("Prob.", Inches(0.5), 6),
 ]
+
+
+# Misma zona de contenido que ocupan los 3 KPI + la tabla de la slide
+# "Tiempos de Residencia" (T896112 a T4946904): las slides nuevas de gráficos
+# (solo Cartera General) la reutilizan completa para sus gráficos nativos.
+_GRAFICOS_LEFT = 256032
+_GRAFICOS_TOP = 896112
+_GRAFICOS_WIDTH = 7644384
+_GRAFICOS_BOTTOM = _TABLA_DETALLE_TOP + _TABLA_DETALLE_HEIGHT
+_GRAFICOS_HEIGHT = _GRAFICOS_BOTTOM - _GRAFICOS_TOP
+_GRAFICOS_SHAPES_A_QUITAR = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17]  # 3 KPI (bg+valor+label) + tabla
 
 
 def _quitar_shape(slide, shape_id):
@@ -492,6 +530,96 @@ def _duplicar_slide_antes_de(prs, index_fuente, slide_id_referencia):
     xml_slides.remove(elemento)
     xml_slides.insert(_indice_por_slide_id(prs, slide_id_referencia), elemento)
     return nueva
+
+
+def _agregar_grafico_barras(slide, left, top, width, height, titulo, datos, horizontal=True):
+    """Agrega un gráfico de barras nativo (no una imagen ni barras dibujadas a
+    mano): así el ancho/alto de cada barra siempre es fiel al valor real, sin
+    importar cuántas categorías traiga `datos` (lista de tuplas
+    (categoria, valor), ya ordenada de mayor a menor)."""
+    categorias = [str(c) if c not in (None, "") else "Sin dato" for c, _ in datos]
+    valores = [v for _, v in datos]
+    chart_data = CategoryChartData()
+    if horizontal:
+        categorias = [_truncar_texto(c, 26) for c in categorias]
+        # Un gráfico de barras horizontales dibuja la primera categoría abajo:
+        # se invierte el orden para que el puesto #1 quede arriba.
+        chart_data.categories = list(reversed(categorias))
+        chart_data.add_series("Serie", list(reversed(valores)))
+        tipo = XL_CHART_TYPE.BAR_CLUSTERED
+    else:
+        chart_data.categories = categorias
+        chart_data.add_series("Serie", valores)
+        tipo = XL_CHART_TYPE.COLUMN_CLUSTERED
+
+    chart = slide.shapes.add_chart(tipo, left, top, width, height, chart_data).chart
+    chart.has_legend = False
+    chart.has_title = True
+    chart.chart_title.text_frame.text = titulo
+    run_titulo = chart.chart_title.text_frame.paragraphs[0].runs[0]
+    run_titulo.font.size, run_titulo.font.bold = Pt(11), True
+    run_titulo.font.color.rgb = RGBColor(0x0D, 0x1F, 0x38)
+
+    plot = chart.plots[0]
+    plot.has_data_labels = True
+    plot.data_labels.font.size = Pt(9)
+    plot.data_labels.number_format = "#,##0"
+    plot.data_labels.number_format_is_linked = False
+    chart.series[0].format.fill.solid()
+    chart.series[0].format.fill.fore_color.rgb = RGBColor(0x14, 0x7A, 0x86)
+
+    chart.category_axis.tick_labels.font.size = Pt(8)
+    chart.value_axis.visible = False
+    chart.value_axis.has_major_gridlines = False
+    return chart
+
+
+def _construir_slide_top5(prs, s7_id, kpis):
+    """Slide "Top 5 — Concentración de Cartera" (solo Cartera General): 3
+    gráficos nativos (Asegurado / Corredor / Aseguradora), ya que a diferencia
+    de la slide de Distribución (que siempre tiene 4 bloques fijos) acá la
+    cantidad de nombres a graficar puede variar."""
+    slide = _duplicar_slide_antes_de(prs, 4, s7_id)
+    for shape_id in _GRAFICOS_SHAPES_A_QUITAR:
+        _quitar_shape(slide, shape_id)
+    _set_shape_text(slide, SLIDE_GESTIONES["titulo"], "TOP 5 — CONCENTRACIÓN DE CARTERA")
+    _set_shape_text(slide, SLIDE_GESTIONES["subtitulo"], "Cartera General")
+
+    gap = 137160
+    ancho_col = (_GRAFICOS_WIDTH - 2 * gap) // 3
+    lefts = [_GRAFICOS_LEFT, _GRAFICOS_LEFT + ancho_col + gap, _GRAFICOS_LEFT + 2 * (ancho_col + gap)]
+    graficos = [
+        ("Top 5 Asegurados", kpis["top5_asegurado"]),
+        ("Top 5 Corredores", kpis["top5_corredor"]),
+        ("Top 5 Aseguradoras", kpis["top5_aseguradora"]),
+    ]
+    for left, (titulo, datos) in zip(lefts, graficos):
+        _agregar_grafico_barras(slide, left, _GRAFICOS_TOP, ancho_col, _GRAFICOS_HEIGHT, titulo, datos, horizontal=True)
+    return slide
+
+
+def _construir_slide_mcl_probabilidad(prs, s7_id, kpis):
+    """Slide "Casos MCL por Probabilidad de Cierre 2026" (solo Cartera
+    General): cantidad de casos y honorarios totales en gráficos separados
+    (no comparten eje, ya que una escala es "casos" y la otra "UF")."""
+    slide = _duplicar_slide_antes_de(prs, 4, s7_id)
+    for shape_id in _GRAFICOS_SHAPES_A_QUITAR:
+        _quitar_shape(slide, shape_id)
+    _set_shape_text(slide, SLIDE_GESTIONES["titulo"], "CASOS MCL POR PROBABILIDAD DE CIERRE 2026")
+    _set_shape_text(slide, SLIDE_GESTIONES["subtitulo"], "Cartera General")
+
+    categorias = ["100% – Cierta", "75% – Alt. probable", "50% – Podría ser", "0% – Nula"]
+    tc, th = kpis["mcl_tier_counts"], kpis["mcl_tier_honorarios"]
+    datos_cantidad = list(zip(categorias, [tc[100], tc[75], tc[50], tc[0]]))
+    datos_honorarios = list(zip(categorias, [round(th[100]), round(th[75]), round(th[50]), round(th[0])]))
+
+    gap = 182880
+    ancho_col = (_GRAFICOS_WIDTH - gap) // 2
+    _agregar_grafico_barras(slide, _GRAFICOS_LEFT, _GRAFICOS_TOP, ancho_col, _GRAFICOS_HEIGHT,
+                             "Cantidad de casos MCL", datos_cantidad, horizontal=False)
+    _agregar_grafico_barras(slide, _GRAFICOS_LEFT + ancho_col + gap, _GRAFICOS_TOP, ancho_col, _GRAFICOS_HEIGHT,
+                             "Honorarios totales MCL (UF)", datos_honorarios, horizontal=False)
+    return slide
 
 
 def generar_pptx(fecha_corte, titulo_cartera, tabla, pasos, alerta_prioritaria):
@@ -655,6 +783,15 @@ def generar_pptx(fecha_corte, titulo_cartera, tabla, pasos, alerta_prioritaria):
     # encabezado/KPIs de Tiempos de Residencia pero con una tabla propia más
     # densa (hasta 20 casos por página en vez de 10). ---
     s7_id = s7.slide_id
+
+    # --- Slides exclusivas de Cartera General (sin filtro de Corredora/
+    # Aseguradora/Asegurado/Ajustador): Top 5 de concentración y Casos MCL
+    # por Probabilidad de Cierre 2026. Se insertan antes de "Próximos pasos",
+    # junto con el resto de las slides adicionales. ---
+    if titulo_cartera == "Cartera General":
+        _construir_slide_top5(prs, s7_id, kpis)
+        _construir_slide_mcl_probabilidad(prs, s7_id, kpis)
+
     detalle = tabla.sort_values("Dias", ascending=False).reset_index(drop=True)
     paginas_detalle = [
         detalle.iloc[i:i + _TABLA_DETALLE_FILAS_MAX] for i in range(0, len(detalle), _TABLA_DETALLE_FILAS_MAX)
