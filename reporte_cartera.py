@@ -342,17 +342,23 @@ def calcular_kpis(tabla):
         0: int((prob < 25).sum()),
     }
 
-    # Mismos tramos de probabilidad 2026, pero acotados a los casos MCL (para
-    # la slide "Casos MCL por Probabilidad de Cierre 2026", solo Cartera General).
-    mcl_prob = pd.to_numeric(mcl["Prob"], errors="coerce").fillna(100)
-    tier_masks_mcl = {
-        100: mcl_prob >= 90,
-        75: (mcl_prob >= 60) & (mcl_prob < 90),
-        50: (mcl_prob >= 25) & (mcl_prob < 60),
-        0: mcl_prob < 25,
-    }
-    mcl_tier_counts = {tier: int(mask.sum()) for tier, mask in tier_masks_mcl.items()}
-    mcl_tier_honorarios = {tier: float(mcl.loc[mask, "Honorarios"].sum()) for tier, mask in tier_masks_mcl.items()}
+    # Mismos tramos de probabilidad 2026, pero acotados a MCL / No MCL por
+    # separado (para las slides "Casos MCL/No MCL por Probabilidad de Cierre
+    # 2026", solo Cartera General).
+    def _tiers_de(subset):
+        prob_subset = pd.to_numeric(subset["Prob"], errors="coerce").fillna(100)
+        masks = {
+            100: prob_subset >= 90,
+            75: (prob_subset >= 60) & (prob_subset < 90),
+            50: (prob_subset >= 25) & (prob_subset < 60),
+            0: prob_subset < 25,
+        }
+        counts = {tier: int(mask.sum()) for tier, mask in masks.items()}
+        honorarios = {tier: float(subset.loc[mask, "Honorarios"].sum()) for tier, mask in masks.items()}
+        return counts, honorarios
+
+    mcl_tier_counts, mcl_tier_honorarios = _tiers_de(mcl)
+    otros_tier_counts, otros_tier_honorarios = _tiers_de(otros)
 
     return dict(
         total=total, uf_count=uf_count, usd_count=usd_count,
@@ -366,6 +372,7 @@ def calcular_kpis(tabla):
         dias_max=dias_max, dias_prom=dias_prom, dias_600=dias_600,
         tier_counts=tier_counts,
         mcl_tier_counts=mcl_tier_counts, mcl_tier_honorarios=mcl_tier_honorarios,
+        otros_tier_counts=otros_tier_counts, otros_tier_honorarios=otros_tier_honorarios,
     )
 
 
@@ -598,27 +605,27 @@ def _construir_slide_top5(prs, s7_id, kpis):
     return slide
 
 
-def _construir_slide_mcl_probabilidad(prs, s7_id, kpis):
-    """Slide "Casos MCL por Probabilidad de Cierre 2026" (solo Cartera
+def _construir_slide_probabilidad_por_tier(prs, s7_id, titulo, etiqueta, tier_counts, tier_honorarios):
+    """Slide "Casos MCL/No MCL por Probabilidad de Cierre 2026" (solo Cartera
     General): cantidad de casos y honorarios totales en gráficos separados
     (no comparten eje, ya que una escala es "casos" y la otra "UF")."""
     slide = _duplicar_slide_antes_de(prs, 4, s7_id)
     for shape_id in _GRAFICOS_SHAPES_A_QUITAR:
         _quitar_shape(slide, shape_id)
-    _set_shape_text(slide, SLIDE_GESTIONES["titulo"], "CASOS MCL POR PROBABILIDAD DE CIERRE 2026")
+    _set_shape_text(slide, SLIDE_GESTIONES["titulo"], titulo)
     _set_shape_text(slide, SLIDE_GESTIONES["subtitulo"], "Cartera General")
 
     categorias = ["100% – Cierta", "75% – Alt. probable", "50% – Podría ser", "0% – Nula"]
-    tc, th = kpis["mcl_tier_counts"], kpis["mcl_tier_honorarios"]
+    tc, th = tier_counts, tier_honorarios
     datos_cantidad = list(zip(categorias, [tc[100], tc[75], tc[50], tc[0]]))
     datos_honorarios = list(zip(categorias, [round(th[100]), round(th[75]), round(th[50]), round(th[0])]))
 
     gap = 182880
     ancho_col = (_GRAFICOS_WIDTH - gap) // 2
     _agregar_grafico_barras(slide, _GRAFICOS_LEFT, _GRAFICOS_TOP, ancho_col, _GRAFICOS_HEIGHT,
-                             "Cantidad de casos MCL", datos_cantidad, horizontal=False)
+                             f"Cantidad de casos {etiqueta}", datos_cantidad, horizontal=False)
     _agregar_grafico_barras(slide, _GRAFICOS_LEFT + ancho_col + gap, _GRAFICOS_TOP, ancho_col, _GRAFICOS_HEIGHT,
-                             "Honorarios totales MCL (UF)", datos_honorarios, horizontal=False)
+                             f"Honorarios totales {etiqueta} (UF)", datos_honorarios, horizontal=False)
     return slide
 
 
@@ -790,7 +797,14 @@ def generar_pptx(fecha_corte, titulo_cartera, tabla, pasos, alerta_prioritaria):
     # junto con el resto de las slides adicionales. ---
     if titulo_cartera == "Cartera General":
         _construir_slide_top5(prs, s7_id, kpis)
-        _construir_slide_mcl_probabilidad(prs, s7_id, kpis)
+        _construir_slide_probabilidad_por_tier(
+            prs, s7_id, "CASOS MCL POR PROBABILIDAD DE CIERRE 2026", "MCL",
+            kpis["mcl_tier_counts"], kpis["mcl_tier_honorarios"],
+        )
+        _construir_slide_probabilidad_por_tier(
+            prs, s7_id, "CASOS NO MCL POR PROBABILIDAD DE CIERRE 2026", "No MCL",
+            kpis["otros_tier_counts"], kpis["otros_tier_honorarios"],
+        )
 
     detalle = tabla.sort_values("Dias", ascending=False).reset_index(drop=True)
     paginas_detalle = [
