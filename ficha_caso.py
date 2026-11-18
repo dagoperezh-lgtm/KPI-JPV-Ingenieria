@@ -23,33 +23,30 @@ Las slides de texto libre en blanco (2 y 7, y la 5 cuando no hay
 observación del Pipeline) llevan la nota "(Texto libre)".
 
 No usa una plantilla .pptx: arma las slides desde cero con python-pptx,
-reutilizando el mismo logo y paleta de colores (navy + teal) que
-assets/plantilla_estado_cartera.pptx.
+reutilizando branding.py (header navy + logo JPV Asociados · Sedgwick
+Alliance, footer teal, cuerpo claro, 16:9) para que tenga la misma
+identidad visual que el Reporte de Cartera.
 """
 import io
-import os
 
 import pandas as pd
-from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.dml import MSO_LINE_DASH_STYLE
+from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR, MSO_AUTO_SIZE
 from pptx.util import Emu, Inches, Pt
 
-LOGO_PATH = os.path.join(os.path.dirname(__file__), "assets", "logo_jpv.png")
+import branding as br
 
-SLIDE_WIDTH = Emu(9144000)
-SLIDE_HEIGHT = Emu(5143500)
+CONTENT_LEFT = br.MARGEN_LATERAL
+CONTENT_TOP = br.CONTENIDO_TOP + Emu(228600)
+CONTENT_WIDTH = br.CONTENIDO_ANCHO
+CONTENT_BOTTOM = br.CONTENIDO_BOTTOM - Emu(91440)
+CONTENT_HEIGHT = CONTENT_BOTTOM - CONTENT_TOP
 
-NAVY_OSCURO = RGBColor(0x0D, 0x1F, 0x38)
-NAVY = RGBColor(0x1B, 0x2A, 0x4A)
-TEAL = RGBColor(0x14, 0xA8, 0xA0)
-TEAL_OSCURO = RGBColor(0x0D, 0x73, 0x77)
 GRIS_TEXTO = RGBColor(0x33, 0x33, 0x33)
-GRIS_CLARO = RGBColor(0xF4, 0xF6, 0xF8)
-BLANCO = RGBColor(0xFF, 0xFF, 0xFF)
-
-HEADER_ALTO = Inches(0.82)
+GRIS_BORDE = RGBColor(0xB0, 0xB8, 0xC2)
+GRIS_NOTA = RGBColor(0x8A, 0x93, 0x9E)
 
 
 def _truncar(texto, max_chars):
@@ -59,60 +56,25 @@ def _truncar(texto, max_chars):
     return texto[: max_chars - 1].rstrip() + "…"
 
 
-def _sin_relleno_ni_borde(shape):
-    shape.fill.background()
-    shape.line.fill.background()
-
-
-def _agregar_header(slide, titulo, subtitulo):
-    barra = slide.shapes.add_shape(1, 0, 0, SLIDE_WIDTH, HEADER_ALTO)
-    barra.fill.solid()
-    barra.fill.fore_color.rgb = NAVY
-    barra.line.fill.background()
-    barra.shadow.inherit = False
-
-    divisor = slide.shapes.add_shape(1, 0, HEADER_ALTO, SLIDE_WIDTH, Emu(36576))
-    divisor.fill.solid()
-    divisor.fill.fore_color.rgb = TEAL_OSCURO
-    divisor.line.fill.background()
-    divisor.shadow.inherit = False
-
-    if os.path.exists(LOGO_PATH):
-        slide.shapes.add_picture(LOGO_PATH, Emu(48142), Emu(76341), height=Emu(528226))
-
-    caja_titulo = slide.shapes.add_textbox(Inches(1.25), Inches(0.12), Inches(7.5), Inches(0.6))
-    tf = caja_titulo.text_frame
-    tf.word_wrap = True
-    p = tf.paragraphs[0]
-    p.text = titulo
-    p.font.size, p.font.bold, p.font.color.rgb = Pt(20), True, BLANCO
-
-    p2 = tf.add_paragraph()
-    p2.text = subtitulo
-    p2.font.size, p2.font.italic, p2.font.color.rgb = Pt(12), True, TEAL
+def _subtitulo(datos):
+    return datos.get("nickname") or datos.get("asegurado") or ""
 
 
 def _campo(slide, left, top, width, etiqueta, valor):
-    caja = slide.shapes.add_textbox(left, top, width, Inches(0.62))
-    tf = caja.text_frame
-    tf.word_wrap = True
-    p = tf.paragraphs[0]
-    p.text = etiqueta.upper()
-    p.font.size, p.font.bold, p.font.color.rgb = Pt(9), True, TEAL_OSCURO
-
-    p2 = tf.add_paragraph()
-    p2.text = str(valor) if valor not in (None, "", "nan", "NaT") else "—"
-    p2.font.size, p2.font.color.rgb = Pt(14), GRIS_TEXTO
+    br.caja_texto(slide, left, top, width, Emu(173736), etiqueta.upper(), br.TEAL_OSCURO, 9, bold=True)
+    valor_texto = str(valor) if valor not in (None, "", "nan", "NaT") else "—"
+    br.caja_texto(slide, left, top + Emu(228600), width, Emu(347472), valor_texto, GRIS_TEXTO, 14)
 
 
-def _slide_resumen(prs, datos):
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    _agregar_header(slide, "FICHA DE CASO", datos.get("nickname") or datos.get("asegurado") or "")
+def _slide_resumen(prs, datos, numero):
+    slide = br.nueva_slide(prs)
+    br.agregar_header(slide, "FICHA DE CASO", etiqueta=_subtitulo(datos))
+    br.agregar_footer(slide, numero=numero)
 
-    col1_x, col2_x = Inches(0.5), Inches(5.15)
-    ancho_col = Inches(4.3)
-    top = Inches(1.15)
-    paso = Inches(0.82)
+    ancho_col = (CONTENT_WIDTH - br.MARGEN_LATERAL) // 2
+    col1_x, col2_x = CONTENT_LEFT, CONTENT_LEFT + ancho_col + br.MARGEN_LATERAL
+    top = CONTENT_TOP
+    paso = Emu(749808)
 
     columna_1 = [
         ("Asegurado", datos.get("asegurado")),
@@ -132,11 +94,6 @@ def _slide_resumen(prs, datos):
         _campo(slide, col1_x, top + i * paso, ancho_col, etiqueta, valor)
     for i, (etiqueta, valor) in enumerate(columna_2):
         _campo(slide, col2_x, top + i * paso, ancho_col, etiqueta, valor)
-
-    pie = slide.shapes.add_textbox(Inches(0.5), Inches(5.25), Inches(9), Inches(0.3))
-    p = pie.text_frame.paragraphs[0]
-    p.text = "JPV Asociados · Ajustadores Especializados"
-    p.font.size, p.font.color.rgb = Pt(8), RGBColor(0x99, 0x99, 0x99)
     return slide
 
 
@@ -146,17 +103,15 @@ def _caja_manual(slide, left, top, width, height, titulo, texto_precargado=None,
     `texto_precargado` (p.ej. "Hechos y Circunstancias" del Acta de
     Inspección), se precarga ese texto —editable— y se indica la `fuente`
     en una nota al pie."""
-    etiqueta = slide.shapes.add_textbox(left, top, width, Inches(0.3))
-    p = etiqueta.text_frame.paragraphs[0]
-    p.text = titulo.upper()
-    p.font.size, p.font.bold, p.font.color.rgb = Pt(11), True, TEAL_OSCURO
+    br.caja_texto(slide, left, top, width, Emu(274320), titulo.upper(), br.TEAL_OSCURO, 11, bold=True)
 
-    alto_nota = Inches(0.22) if (texto_precargado and fuente) else Inches(0)
-    alto_caja = height - Inches(0.32) - alto_nota
-    caja = slide.shapes.add_shape(1, left, top + Inches(0.32), width, alto_caja)
+    alto_nota = Emu(201168) if (texto_precargado and fuente) else Emu(0)
+    top_caja = top + Emu(292608)
+    alto_caja = height - Emu(292608) - alto_nota
+    caja = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, left, top_caja, width, alto_caja)
     caja.fill.solid()
-    caja.fill.fore_color.rgb = GRIS_CLARO
-    caja.line.color.rgb = RGBColor(0xB0, 0xB8, 0xC2)
+    caja.fill.fore_color.rgb = br.GRIS_CLARO
+    caja.line.color.rgb = GRIS_BORDE
     caja.line.width = Pt(1)
     caja.line.dash_style = MSO_LINE_DASH_STYLE.DASH
     caja.shadow.inherit = False
@@ -168,32 +123,31 @@ def _caja_manual(slide, left, top, width, height, titulo, texto_precargado=None,
     p = tf.paragraphs[0]
     if texto_precargado:
         tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
-        p.text = texto_precargado
-        p.font.size, p.font.color.rgb = Pt(12), GRIS_TEXTO
+        run = p.add_run()
+        run.text = texto_precargado
+        run.font.size, run.font.color.rgb = Pt(12), GRIS_TEXTO
     else:
-        p.text = "(Texto libre)"
-        p.font.size, p.font.italic, p.font.color.rgb = Pt(11), True, RGBColor(0x8A, 0x93, 0x9E)
+        run = p.add_run()
+        run.text = "(Texto libre)"
+        run.font.size, run.font.italic, run.font.color.rgb = Pt(11), True, GRIS_NOTA
 
     if texto_precargado and fuente:
-        nota = slide.shapes.add_textbox(left, top + Inches(0.32) + alto_caja + Inches(0.02), width, alto_nota)
-        pn = nota.text_frame.paragraphs[0]
-        pn.text = f"Fuente: {fuente} — edítalo si corresponde."
-        pn.font.size, pn.font.italic, pn.font.color.rgb = Pt(8), True, RGBColor(0x8A, 0x93, 0x9E)
+        br.caja_texto(slide, left, top_caja + alto_caja + Emu(18288), width, alto_nota,
+                      f"Fuente: {fuente} — edítalo si corresponde.", GRIS_NOTA, 8, italic=True)
 
 
-def _slide_descripcion(prs, datos, descripcion_siniestro=None, descripcion_fuente=None):
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    _agregar_header(slide, "DESCRIPCIÓN DEL SINIESTRO Y MATERIA ASEGURADA", datos.get("nickname") or datos.get("asegurado") or "")
+def _slide_descripcion(prs, datos, numero, descripcion_siniestro=None, descripcion_fuente=None):
+    slide = br.nueva_slide(prs)
+    br.agregar_header(slide, "DESCRIPCIÓN DEL SINIESTRO Y MATERIA ASEGURADA", etiqueta=_subtitulo(datos))
+    br.agregar_footer(slide, numero=numero)
 
-    left, width = Inches(0.4), SLIDE_WIDTH - Inches(0.8)
-    top = HEADER_ALTO + Emu(36576) + Inches(0.3)
-    alto_caja, espacio = Inches(1.85), Inches(0.25)
+    alto_caja, espacio = (CONTENT_HEIGHT - Emu(228600)) // 2, Emu(228600)
 
     _caja_manual(
-        slide, left, top, width, alto_caja, "Descripción del Siniestro",
+        slide, CONTENT_LEFT, CONTENT_TOP, CONTENT_WIDTH, alto_caja, "Descripción del Siniestro",
         texto_precargado=descripcion_siniestro, fuente=descripcion_fuente,
     )
-    _caja_manual(slide, left, top + alto_caja + espacio, width, alto_caja, "Materia Asegurada")
+    _caja_manual(slide, CONTENT_LEFT, CONTENT_TOP + alto_caja + espacio, CONTENT_WIDTH, alto_caja, "Materia Asegurada")
     return slide
 
 
@@ -202,41 +156,41 @@ _FOTOS_COLS, _FOTOS_FILAS = 3, 2
 
 
 def _posiciones_grilla_fotos():
-    margen, espacio = Inches(0.4), Inches(0.2)
-    ancho_disponible = SLIDE_WIDTH - 2 * margen - (_FOTOS_COLS - 1) * espacio
-    alto_disponible = SLIDE_HEIGHT - HEADER_ALTO - Emu(36576) - Inches(0.6) - (_FOTOS_FILAS - 1) * espacio
+    espacio = Emu(182880)
+    ancho_disponible = CONTENT_WIDTH - (_FOTOS_COLS - 1) * espacio
+    alto_disponible = CONTENT_HEIGHT - (_FOTOS_FILAS - 1) * espacio
     ancho, alto = Emu(int(ancho_disponible / _FOTOS_COLS)), Emu(int(alto_disponible / _FOTOS_FILAS))
-    top_inicial = HEADER_ALTO + Emu(36576) + Inches(0.3)
     posiciones = []
     for f in range(_FOTOS_FILAS):
         for c in range(_FOTOS_COLS):
-            left = margen + c * (ancho + espacio)
-            top = top_inicial + f * (alto + espacio)
+            left = CONTENT_LEFT + c * (ancho + espacio)
+            top = CONTENT_TOP + f * (alto + espacio)
             posiciones.append((left, top, ancho, alto))
     return posiciones
 
 
 def _casillero_vacio(slide, left, top, ancho, alto, numero):
-    marco = slide.shapes.add_shape(1, left, top, ancho, alto)
+    marco = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, left, top, ancho, alto)
     marco.fill.solid()
-    marco.fill.fore_color.rgb = GRIS_CLARO
-    marco.line.color.rgb = RGBColor(0xB0, 0xB8, 0xC2)
+    marco.fill.fore_color.rgb = br.GRIS_CLARO
+    marco.line.color.rgb = GRIS_BORDE
     marco.line.width = Pt(1)
     marco.line.dash_style = MSO_LINE_DASH_STYLE.DASH
     marco.shadow.inherit = False
     tf = marco.text_frame
     tf.word_wrap = True
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
     p = tf.paragraphs[0]
     p.alignment = PP_ALIGN.CENTER
-    p.text = f"Foto {numero}"
-    p.font.size, p.font.color.rgb = Pt(13), RGBColor(0x8A, 0x93, 0x9E)
-    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    run = p.add_run()
+    run.text = f"Foto {numero}"
+    run.font.size, run.font.color.rgb = Pt(13), GRIS_NOTA
 
 
 def _casillero_con_foto(slide, left, top, ancho, alto, imagen_bytes, pie):
     """Sin marco/recuadro: la foto va directo sobre el fondo de la slide,
     con su pie de foto debajo (más limpio en modo presentación)."""
-    alto_pie = Inches(0.4)
+    alto_pie = Emu(365760)
     alto_imagen = alto - alto_pie
 
     try:
@@ -250,25 +204,21 @@ def _casillero_con_foto(slide, left, top, ancho, alto, imagen_bytes, pie):
     except Exception:
         slide.shapes.add_picture(io.BytesIO(imagen_bytes), left, top, width=ancho, height=alto_imagen)
 
-    caja_pie = slide.shapes.add_textbox(left, top + alto_imagen, ancho, alto_pie)
-    tf = caja_pie.text_frame
-    tf.word_wrap = True
-    p = tf.paragraphs[0]
-    p.alignment = PP_ALIGN.CENTER
-    p.text = _truncar(pie, 90) if pie else ""
-    p.font.size, p.font.color.rgb = Pt(8), GRIS_TEXTO
+    br.caja_texto(slide, left, top + alto_imagen, ancho, alto_pie, _truncar(pie, 90) if pie else "",
+                  GRIS_TEXTO, 8, align=PP_ALIGN.CENTER)
 
 
-def _slide_fotos(prs, datos, fotos=None, pagina=None, total_paginas=None):
+def _slide_fotos(prs, datos, numero, fotos=None, pagina=None, total_paginas=None):
     """Si `fotos` viene vacío/None: una slide con 6 casilleros en blanco
     (comportamiento original, para completar a mano). Si trae fotos (ya
     seleccionadas por el ajustador): esta función se llama una vez por
     página de hasta 6 fotos — ver generar_ficha_pptx."""
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    subtitulo = datos.get("nickname") or datos.get("asegurado") or ""
+    slide = br.nueva_slide(prs)
+    subtitulo = _subtitulo(datos)
     if total_paginas and total_paginas > 1:
         subtitulo = f"{subtitulo} — Página {pagina} de {total_paginas}"
-    _agregar_header(slide, "REGISTRO FOTOGRÁFICO", subtitulo)
+    br.agregar_header(slide, "REGISTRO FOTOGRÁFICO", etiqueta=subtitulo)
+    br.agregar_footer(slide, numero=numero)
 
     posiciones = _posiciones_grilla_fotos()
     for i, (left, top, ancho, alto) in enumerate(posiciones, start=1):
@@ -279,48 +229,45 @@ def _slide_fotos(prs, datos, fotos=None, pagina=None, total_paginas=None):
     return slide
 
 
-def _slide_gestiones(prs, datos):
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    _agregar_header(slide, "DETALLE DE GESTIONES REALIZADAS", datos.get("nickname") or datos.get("asegurado") or "")
+def _slide_gestiones(prs, datos, numero):
+    slide = br.nueva_slide(prs)
+    br.agregar_header(slide, "DETALLE DE GESTIONES REALIZADAS", etiqueta=_subtitulo(datos))
+    br.agregar_footer(slide, numero=numero)
 
     n_filas_dato = 6
-    left, top = Inches(0.4), HEADER_ALTO + Emu(36576) + Inches(0.3)
-    width = SLIDE_WIDTH - Inches(0.8)
-    height = SLIDE_HEIGHT - top - Inches(0.3)
-
-    graphic_frame = slide.shapes.add_table(n_filas_dato + 1, 2, left, top, width, height)
+    graphic_frame = slide.shapes.add_table(n_filas_dato + 1, 2, CONTENT_LEFT, CONTENT_TOP, CONTENT_WIDTH, CONTENT_HEIGHT)
     tabla = graphic_frame.table
-    tabla.columns[0].width = Inches(1.6)
-    tabla.columns[1].width = width - Inches(1.6)
+    ancho_fecha = Emu(1645920)
+    tabla.columns[0].width = ancho_fecha
+    tabla.columns[1].width = CONTENT_WIDTH - ancho_fecha
 
     for c, texto in enumerate(["Fecha", "Detalle de la gestión"]):
         celda = tabla.cell(0, c)
         celda.text_frame.paragraphs[0].text = texto
         celda.fill.solid()
-        celda.fill.fore_color.rgb = NAVY_OSCURO
+        celda.fill.fore_color.rgb = br.NAVY_OSCURO
         run = celda.text_frame.paragraphs[0].runs[0]
-        run.font.size, run.font.bold, run.font.color.rgb = Pt(12), True, BLANCO
+        run.font.size, run.font.bold, run.font.color.rgb = Pt(12), True, br.BLANCO
 
     for r in range(1, n_filas_dato + 1):
         for c in range(2):
             celda = tabla.cell(r, c)
             celda.fill.solid()
-            celda.fill.fore_color.rgb = BLANCO
+            celda.fill.fore_color.rgb = br.BLANCO
             celda.text_frame.paragraphs[0].text = ""
     return slide
 
 
-def _slide_reserva(prs, datos):
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    _agregar_header(slide, "RESERVA DEL CASO", datos.get("nickname") or datos.get("asegurado") or "")
-
-    top = HEADER_ALTO + Emu(36576) + Inches(0.25)
-    left, width = Inches(0.4), SLIDE_WIDTH - Inches(0.8)
+def _slide_reserva(prs, datos, numero):
+    slide = br.nueva_slide(prs)
+    br.agregar_header(slide, "RESERVA DEL CASO", etiqueta=_subtitulo(datos))
+    br.agregar_footer(slide, numero=numero)
 
     # --- Valor destacado (extraído de la planilla base) ---
-    callout = slide.shapes.add_shape(1, left, top, width, Inches(0.85))
+    alto_callout = Emu(822960)
+    callout = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, CONTENT_LEFT, CONTENT_TOP, CONTENT_WIDTH, alto_callout)
     callout.fill.solid()
-    callout.fill.fore_color.rgb = NAVY
+    callout.fill.fore_color.rgb = br.NAVY
     callout.line.fill.background()
     callout.shadow.inherit = False
     tf = callout.text_frame
@@ -328,16 +275,19 @@ def _slide_reserva(prs, datos):
     tf.vertical_anchor = MSO_ANCHOR.MIDDLE
     p = tf.paragraphs[0]
     p.alignment = PP_ALIGN.CENTER
-    p.text = "RESERVA (Pérdida neta)"
-    p.font.size, p.font.bold, p.font.color.rgb = Pt(11), True, TEAL
+    run = p.add_run()
+    run.text = "RESERVA (Pérdida neta)"
+    run.font.size, run.font.bold, run.font.color.rgb = Pt(12), True, br.TEAL_CLARO
     p2 = tf.add_paragraph()
     p2.alignment = PP_ALIGN.CENTER
-    p2.text = datos.get("perdida_neta_fmt") or "—"
-    p2.font.size, p2.font.bold, p2.font.color.rgb = Pt(26), True, BLANCO
+    run2 = p2.add_run()
+    run2.text = datos.get("perdida_neta_fmt") or "—"
+    run2.font.size, run2.font.bold, run2.font.color.rgb = Pt(30), True, br.BLANCO
 
     # --- Desglose extraído de la planilla + columna de justificación manual ---
-    top_tabla = top + Inches(1.05)
-    height_tabla = SLIDE_HEIGHT - top_tabla - Inches(0.3)
+    espacio = Emu(228600)
+    top_tabla = CONTENT_TOP + alto_callout + espacio
+    height_tabla = CONTENT_BOTTOM - top_tabla
     filas_valores = [
         ("Pérdida bruta", datos.get("perdida_bruta_fmt")),
         ("Deducible", datos.get("deducible_fmt")),
@@ -346,58 +296,58 @@ def _slide_reserva(prs, datos):
         ("Gastos", datos.get("gastos_fmt")),
         ("Honorarios", datos.get("honorarios_fmt")),
     ]
-    graphic_frame = slide.shapes.add_table(len(filas_valores) + 1, 3, left, top_tabla, width, height_tabla)
+    graphic_frame = slide.shapes.add_table(len(filas_valores) + 1, 3, CONTENT_LEFT, top_tabla, CONTENT_WIDTH, height_tabla)
     tabla = graphic_frame.table
-    tabla.columns[0].width = Inches(2.4)
-    tabla.columns[1].width = Inches(1.8)
-    tabla.columns[2].width = width - Inches(4.2)
+    ancho_concepto, ancho_monto = Emu(2971800), Emu(2194560)
+    tabla.columns[0].width = ancho_concepto
+    tabla.columns[1].width = ancho_monto
+    tabla.columns[2].width = CONTENT_WIDTH - ancho_concepto - ancho_monto
 
     for c, texto in enumerate(["Concepto", "Monto (planilla)", "Justificación del ajustador"]):
         celda = tabla.cell(0, c)
         celda.text_frame.paragraphs[0].text = texto
         celda.fill.solid()
-        celda.fill.fore_color.rgb = NAVY_OSCURO
+        celda.fill.fore_color.rgb = br.NAVY_OSCURO
         run = celda.text_frame.paragraphs[0].runs[0]
-        run.font.size, run.font.bold, run.font.color.rgb = Pt(11), True, BLANCO
+        run.font.size, run.font.bold, run.font.color.rgb = Pt(11), True, br.BLANCO
 
     for r, (concepto, monto) in enumerate(filas_valores, start=1):
         celda_concepto = tabla.cell(r, 0)
         celda_concepto.text_frame.paragraphs[0].text = concepto
         celda_concepto.fill.solid()
-        celda_concepto.fill.fore_color.rgb = GRIS_CLARO
+        celda_concepto.fill.fore_color.rgb = br.GRIS_CLARO
         celda_concepto.text_frame.paragraphs[0].runs[0].font.size = Pt(11)
 
         celda_monto = tabla.cell(r, 1)
         celda_monto.text_frame.paragraphs[0].text = monto or "—"
         celda_monto.fill.solid()
-        celda_monto.fill.fore_color.rgb = GRIS_CLARO
+        celda_monto.fill.fore_color.rgb = br.GRIS_CLARO
         celda_monto.text_frame.paragraphs[0].runs[0].font.size = Pt(11)
 
         celda_just = tabla.cell(r, 2)
         celda_just.text_frame.paragraphs[0].text = ""
         celda_just.fill.solid()
-        celda_just.fill.fore_color.rgb = BLANCO
+        celda_just.fill.fore_color.rgb = br.BLANCO
     return slide
 
 
-def _slide_texto_libre(prs, datos, titulo, texto_precargado=None, fuente=None):
+def _slide_texto_libre(prs, datos, titulo, numero, texto_precargado=None, fuente=None):
     """Slide con un único cuadro grande de texto (usado por Estado Actual del
     Siniestro y Próximas Acciones). Si `texto_precargado` viene vacío, el
     cuadro queda en blanco con la nota "(Texto libre)"; si trae contenido
     (p.ej. la observación del Pipeline), se precarga ese texto —editable— y
     se indica su `fuente` en una nota al pie."""
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    _agregar_header(slide, titulo, datos.get("nickname") or datos.get("asegurado") or "")
+    slide = br.nueva_slide(prs)
+    br.agregar_header(slide, titulo, etiqueta=_subtitulo(datos))
+    br.agregar_footer(slide, numero=numero)
 
-    top = HEADER_ALTO + Emu(36576) + Inches(0.3)
-    left, width = Inches(0.4), SLIDE_WIDTH - Inches(0.8)
-    alto_nota = Inches(0.3) if (texto_precargado and fuente) else Inches(0)
-    height = SLIDE_HEIGHT - top - Inches(0.3) - alto_nota
+    alto_nota = Emu(274320) if (texto_precargado and fuente) else Emu(0)
+    height = CONTENT_HEIGHT - alto_nota
 
-    caja = slide.shapes.add_shape(1, left, top, width, height)
+    caja = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, CONTENT_LEFT, CONTENT_TOP, CONTENT_WIDTH, height)
     caja.fill.solid()
-    caja.fill.fore_color.rgb = GRIS_CLARO
-    caja.line.color.rgb = RGBColor(0xB0, 0xB8, 0xC2)
+    caja.fill.fore_color.rgb = br.GRIS_CLARO
+    caja.line.color.rgb = GRIS_BORDE
     caja.line.width = Pt(1)
     caja.line.dash_style = MSO_LINE_DASH_STYLE.DASH
     caja.shadow.inherit = False
@@ -409,17 +359,17 @@ def _slide_texto_libre(prs, datos, titulo, texto_precargado=None, fuente=None):
     p = tf.paragraphs[0]
     if texto_precargado:
         tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
-        p.text = texto_precargado
-        p.font.size, p.font.color.rgb = Pt(13), GRIS_TEXTO
+        run = p.add_run()
+        run.text = texto_precargado
+        run.font.size, run.font.color.rgb = Pt(14), GRIS_TEXTO
     else:
-        p.text = "(Texto libre)"
-        p.font.size, p.font.italic, p.font.color.rgb = Pt(11), True, RGBColor(0x8A, 0x93, 0x9E)
+        run = p.add_run()
+        run.text = "(Texto libre)"
+        run.font.size, run.font.italic, run.font.color.rgb = Pt(12), True, GRIS_NOTA
 
     if texto_precargado and fuente:
-        nota = slide.shapes.add_textbox(left, top + height + Inches(0.03), width, alto_nota)
-        pn = nota.text_frame.paragraphs[0]
-        pn.text = f"Fuente: {fuente} — edítalo si corresponde."
-        pn.font.size, pn.font.italic, pn.font.color.rgb = Pt(9), True, RGBColor(0x8A, 0x93, 0x9E)
+        br.caja_texto(slide, CONTENT_LEFT, CONTENT_TOP + height + Emu(27432), CONTENT_WIDTH, alto_nota,
+                      f"Fuente: {fuente} — edítalo si corresponde.", GRIS_NOTA, 9, italic=True)
     return slide
 
 
@@ -475,28 +425,31 @@ def generar_ficha_pptx(
         honorarios_fmt=_fmt_monto(fila.get("Honorarios (UF)"), "UF"),
     )
 
-    prs = Presentation()
-    prs.slide_width = SLIDE_WIDTH
-    prs.slide_height = SLIDE_HEIGHT
+    prs = br.nueva_presentacion()
+    n = 1
 
-    _slide_resumen(prs, datos)
-    _slide_descripcion(prs, datos, descripcion_siniestro=descripcion_siniestro, descripcion_fuente=descripcion_fuente)
+    _slide_resumen(prs, datos, n); n += 1
+    _slide_descripcion(prs, datos, n, descripcion_siniestro=descripcion_siniestro, descripcion_fuente=descripcion_fuente)
+    n += 1
     if fotos_seleccionadas:
         paginas = [
             fotos_seleccionadas[i:i + _FOTOS_POR_PAGINA]
             for i in range(0, len(fotos_seleccionadas), _FOTOS_POR_PAGINA)
         ]
         for num_pagina, pagina in enumerate(paginas, start=1):
-            _slide_fotos(prs, datos, fotos=pagina, pagina=num_pagina, total_paginas=len(paginas))
+            _slide_fotos(prs, datos, n, fotos=pagina, pagina=num_pagina, total_paginas=len(paginas))
+            n += 1
     else:
-        _slide_fotos(prs, datos)
-    _slide_reserva(prs, datos)
+        _slide_fotos(prs, datos, n)
+        n += 1
+    _slide_reserva(prs, datos, n); n += 1
     _slide_texto_libre(
-        prs, datos, "ESTADO ACTUAL DEL SINIESTRO",
+        prs, datos, "ESTADO ACTUAL DEL SINIESTRO", n,
         texto_precargado=observacion_pipeline, fuente=observacion_fuente,
     )
-    _slide_gestiones(prs, datos)
-    _slide_texto_libre(prs, datos, "PRÓXIMAS ACCIONES")
+    n += 1
+    _slide_gestiones(prs, datos, n); n += 1
+    _slide_texto_libre(prs, datos, "PRÓXIMAS ACCIONES", n)
 
     output = io.BytesIO()
     prs.save(output)
