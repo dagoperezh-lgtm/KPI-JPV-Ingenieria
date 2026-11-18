@@ -1,25 +1,23 @@
 """
 Generador del Reporte Ejecutivo "Estado de Cartera".
 
-Reutiliza el diseño de assets/plantilla_estado_cartera.pptx (7 slides) y
-reemplaza únicamente los textos, tablas y el gráfico que contienen datos,
-preservando el formato original (fuentes, colores, posiciones) del template.
+Cada slide se construye 100% por código con branding.py (header navy + logo
+JPV Asociados · Sedgwick Alliance, footer teal, cuerpo claro, 16:9), en vez
+de depender de un archivo .pptx plantilla con shape_id fijos: así se puede
+agregar o quitar slides (Detalle Completo, Top 5, MCL/No MCL) sin tocar un
+archivo binario aparte.
 Sirve para cualquier corte de cartera: por Corredora, Compañía de seguros
 (Aseguradora), Asegurado, o una combinación de estos filtros.
 """
-import copy
 import io
-import os
 import re
-from datetime import datetime
 
 import pandas as pd
-from pptx import Presentation
 from pptx.chart.data import CategoryChartData
-from pptx.dml.color import RGBColor
 from pptx.enum.chart import XL_CHART_TYPE
-from pptx.oxml.ns import qn
-from pptx.util import Inches, Pt
+from pptx.util import Emu, Pt
+
+import branding as br
 
 try:
     import gspread
@@ -27,8 +25,6 @@ try:
 except ImportError:
     gspread = None
     Credentials = None
-
-TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "assets", "plantilla_estado_cartera.pptx")
 
 # Pipeline actualizado por el equipo en Google Sheets, compartido en modo
 # Lector con la cuenta de servicio opscontrol-bot@... (misma cuenta que ya
@@ -58,40 +54,6 @@ MESES_ES = {
     7: "julio", 8: "agosto", 9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre",
 }
 
-# --- Mapa de shape_id por slide (0-indexado) construido a partir de assets/plantilla_estado_cartera.pptx ---
-SLIDE1 = dict(titulo_cartera=6, fecha_corte=10, casos_activos=12, perdida_uf=15, perdida_usd=18)
-SLIDE2 = dict(titulo_cartera=6, cartera_activa=11, division_split=17, divisa_split=23,
-              exposicion_uf=29, exposicion_usd=35, mcl_pct=41, mcl_casos=43)
-SLIDE3 = dict(mcl_count=11, mcl_pct_line=12, mcl_sum_line=13,
-              otros_count=17, otros_pct_line=18, otros_sum_line=19,
-              aseg1_nombre=21, aseg1_barra=22, aseg1_count=23,
-              aseg2_nombre=24, aseg2_barra=25, aseg2_count=26,
-              aseg3_nombre=27, aseg3_barra=28, aseg3_count=29,
-              aseg4_nombre=30, aseg4_barra=31, aseg4_count=32,
-              aseg_otros_barra=34, aseg_otros_count=35)
-SLIDE4 = dict(tier100=12, tier75=18, tier50=24, tier0=30)
-SLIDE5 = dict(caso_mas_antiguo=9, promedio_cartera=12, promedio_cartera_label=13, casos_600=15, tabla=17)
-SLIDE6 = dict(intro=8, alerta=11, tabla=9)
-# Slide "Gestiones Iniciales" (penúltima): clon exacto de la slide 5, mismos
-# shape_id, pero con los 3 KPI y la tabla reutilizados para casos recientes.
-SLIDE_GESTIONES = dict(
-    titulo=5, subtitulo=6,
-    kpi1_valor=9, kpi1_label=10,
-    kpi2_valor=12, kpi2_label=13,
-    kpi3_valor=15, kpi3_label=16,
-    tabla=17,
-)
-SLIDE7 = dict(
-    footer=32,
-    pasos=[
-        dict(titulo=10, desc=11),
-        dict(titulo=15, desc=16),
-        dict(titulo=20, desc=21),
-        dict(titulo=30, desc=31),
-        dict(titulo=38, desc=36),
-    ],
-)
-
 
 def fmt_uf(valor):
     return f"{valor:,.0f}".replace(",", ".") + " UF"
@@ -109,9 +71,9 @@ def fmt_fecha_larga(fecha):
 
 def _fila_siniestro_nickname(siniestro, nickname, max_chars=70):
     """Combina el N° de siniestro con el nickname para las columnas 'Siniestro
-    / Nickname' de las tablas (slides 5, 6 y 'Gestiones Iniciales'). El N° de
-    siniestro nunca se trunca (es un identificador); el nickname se recorta
-    con el espacio restante para no salirse del ancho de la columna."""
+    / Nickname' de las tablas (Tiempos de Residencia, Atención Especial y
+    Gestiones Iniciales). El N° de siniestro nunca se trunca (es un
+    identificador); el nickname se recorta con el espacio restante."""
     siniestro = str(siniestro).strip()
     nickname = str(nickname).strip()
     if not siniestro or siniestro.lower() in ("nan", "none"):
@@ -123,8 +85,8 @@ def _fila_siniestro_nickname(siniestro, nickname, max_chars=70):
 
 def _truncar_texto(texto, max_chars):
     """Recorta observaciones largas para que la fila no crezca más de lo que
-    permite la plantilla (si no, las últimas filas de la tabla quedan fuera
-    del área visible de la slide en modo presentación)."""
+    permite la tabla (si no, las últimas filas quedan fuera del área visible
+    de la slide en modo presentación)."""
     texto = str(texto).strip()
     if len(texto) <= max_chars:
         return texto
@@ -376,6 +338,20 @@ def calcular_kpis(tabla):
     )
 
 
+# ---------------------------------------------------------------------------
+# Motor de slides (branding.py): header + cuerpo + footer en cada una.
+# ---------------------------------------------------------------------------
+
+CONTENT_LEFT = br.MARGEN_LATERAL
+CONTENT_TOP = br.CONTENIDO_TOP + Emu(228600)
+CONTENT_WIDTH = br.CONTENIDO_ANCHO
+CONTENT_BOTTOM = br.CONTENIDO_BOTTOM - Emu(91440)
+CONTENT_HEIGHT = CONTENT_BOTTOM - CONTENT_TOP
+
+_GAP = Emu(182880)
+_KPI_ALTO = Emu(1097280)
+
+
 def _set_text(text_frame, texto):
     p = text_frame.paragraphs[0]
     if p.runs:
@@ -386,157 +362,37 @@ def _set_text(text_frame, texto):
         p.text = texto
 
 
-def _get_shape(slide, shape_id):
-    for shape in slide.shapes:
-        if shape.shape_id == shape_id:
-            return shape
-    raise KeyError(f"shape_id {shape_id} no encontrado en el slide")
+def _slide_base(prs, titulo, etiqueta=None, numero=None, fondo_claro=True):
+    slide = br.nueva_slide(prs)
+    br.agregar_header(slide, titulo, etiqueta=etiqueta, fondo_claro=fondo_claro)
+    br.agregar_footer(slide, numero=numero)
+    return slide
 
 
-def _set_shape_text(slide, shape_id, texto):
-    _set_text(_get_shape(slide, shape_id).text_frame, texto)
+def _tarjeta_kpi(slide, left, top, width, height, valor, etiqueta, oscuro=False):
+    fondo_color = br.NAVY_OSCURO if oscuro else br.BLANCO
+    color_valor = br.BLANCO if oscuro else br.NAVY
+    color_etiqueta = br.TEAL_PALIDO if oscuro else br.GRIS_SLATE
+    br.rect(slide, left, top, width, height, fondo_color)
+    br.rect(slide, left, top, Emu(54864), height, br.TEAL)
+    pad = Emu(137160)
+    # Los valores largos (p.ej. "3.408.000 UF + USD 2,6 M") se reducen de
+    # tamaño para no invadir la etiqueta de abajo.
+    tam_valor = 22 if len(valor) <= 14 else (18 if len(valor) <= 22 else 14)
+    br.caja_texto(slide, left + pad, top + Emu(91440), width - 2 * pad, Emu(640080),
+                  valor, color_valor, tam_valor, bold=True, fuente=br.FUENTE_TITULOS)
+    br.caja_texto(slide, left + pad, top + height - Emu(320040), width - 2 * pad, Emu(274320),
+                  etiqueta, color_etiqueta, 10.5, fuente=br.FUENTE_TEXTO)
 
 
-def _get_table(slide, shape_id):
-    for shape in slide.shapes:
-        if shape.shape_id == shape_id and shape.has_table:
-            return shape.table
-    raise KeyError(f"tabla shape_id {shape_id} no encontrada en el slide")
-
-
-def _fill_table_rows(tabla_pptx, filas):
-    """filas: lista de listas (cada una con el mismo número de columnas que la tabla).
-    Rellena desde la fila 1 (la 0 es el encabezado) y limpia las filas sobrantes."""
-    n_filas_datos = len(tabla_pptx.rows) - 1
-    for i in range(n_filas_datos):
-        for c in range(len(tabla_pptx.columns)):
-            valor = filas[i][c] if i < len(filas) else ""
-            _set_text(tabla_pptx.cell(i + 1, c).text_frame, str(valor))
-
-
-# Mismo cuadro que ocupaba la tabla original de 10 filas en la slide de
-# Tiempos de Residencia (assets/plantilla_estado_cartera.pptx, shape_id 17).
-_TABLA_DETALLE_LEFT = 256032
-_TABLA_DETALLE_TOP = 1622909
-_TABLA_DETALLE_WIDTH = 7644384
-_TABLA_DETALLE_HEIGHT = 3323995
-_TABLA_DETALLE_FILAS_MAX = 20
-_TABLA_DETALLE_COLS = [
-    # (encabezado, ancho, max_chars para truncar el valor)
-    ("#", Inches(0.35), 3),
-    ("Caso", Inches(0.75), 12),
-    ("Siniestro", Inches(1.0), 18),
-    ("Nickname / Asegurado", Inches(4.76), 95),
-    ("Divisa", Inches(0.5), 6),
-    ("Días", Inches(0.5), 6),
-    ("Prob.", Inches(0.5), 6),
-]
-
-
-# Misma zona de contenido que ocupan los 3 KPI + la tabla de la slide
-# "Tiempos de Residencia" (T896112 a T4946904): las slides nuevas de gráficos
-# (solo Cartera General) la reutilizan completa para sus gráficos nativos.
-_GRAFICOS_LEFT = 256032
-_GRAFICOS_TOP = 896112
-_GRAFICOS_WIDTH = 7644384
-_GRAFICOS_BOTTOM = _TABLA_DETALLE_TOP + _TABLA_DETALLE_HEIGHT
-_GRAFICOS_HEIGHT = _GRAFICOS_BOTTOM - _GRAFICOS_TOP
-_GRAFICOS_SHAPES_A_QUITAR = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17]  # 3 KPI (bg+valor+label) + tabla
-
-
-def _quitar_shape(slide, shape_id):
-    shape = _get_shape(slide, shape_id)
-    shape._element.getparent().remove(shape._element)
-
-
-def _construir_tabla_detalle(slide, filas):
-    """Tabla más densa que las demás del reporte (hasta 20 filas de datos en
-    el mismo espacio donde las otras tablas ponen 10), pensada solo para
-    listar la cartera completa. Se construye desde cero (no es un clon de
-    ninguna tabla existente) para poder controlar el alto de fila y el
-    tamaño de fuente sin afectar al resto de las slides."""
-    n_filas = _TABLA_DETALLE_FILAS_MAX + 1
-    n_cols = len(_TABLA_DETALLE_COLS)
-    graphic_frame = slide.shapes.add_table(
-        n_filas, n_cols, _TABLA_DETALLE_LEFT, _TABLA_DETALLE_TOP, _TABLA_DETALLE_WIDTH, _TABLA_DETALLE_HEIGHT
-    )
-    tabla_pptx = graphic_frame.table
-    tabla_pptx.horz_banding = False
-
-    for col, (_, ancho, _) in zip(tabla_pptx.columns, _TABLA_DETALLE_COLS):
-        col.width = ancho
-
-    alto_header = Inches(0.28)
-    alto_dato = Inches((_TABLA_DETALLE_HEIGHT / 914400 - 0.28) / _TABLA_DETALLE_FILAS_MAX)
-    tabla_pptx.rows[0].height = alto_header
-    for fila in list(tabla_pptx.rows)[1:]:
-        fila.height = alto_dato
-
-    for c, (encabezado, _, _) in enumerate(_TABLA_DETALLE_COLS):
-        cell = tabla_pptx.cell(0, c)
-        _set_text(cell.text_frame, encabezado)
-        cell.fill.solid()
-        cell.fill.fore_color.rgb = RGBColor(0x0D, 0x1F, 0x38)
-        cell.margin_left, cell.margin_right = Pt(3), Pt(3)
-        cell.margin_top, cell.margin_bottom = Pt(1), Pt(1)
-        run = cell.text_frame.paragraphs[0].runs[0]
-        run.font.size, run.font.bold = Pt(8), True
-        run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-
-    for i in range(_TABLA_DETALLE_FILAS_MAX):
-        for c, (_, _, max_chars) in enumerate(_TABLA_DETALLE_COLS):
-            valor = _truncar_texto(filas[i][c], max_chars) if i < len(filas) else ""
-            cell = tabla_pptx.cell(i + 1, c)
-            cell.fill.background()
-            cell.margin_left, cell.margin_right = Pt(3), Pt(3)
-            cell.margin_top, cell.margin_bottom = Pt(0.5), Pt(0.5)
-            cell.text_frame.word_wrap = False
-            _set_text(cell.text_frame, valor)
-            if cell.text_frame.paragraphs[0].runs:
-                cell.text_frame.paragraphs[0].runs[0].font.size = Pt(6.5)
-    return tabla_pptx
-
-
-def _duplicar_slide(prs, index):
-    """Clona la slide en `index` (mismo layout, shapes, tabla e imagen) y la
-    agrega al final de la presentación. Los shape_id quedan idénticos a los
-    de la slide original, así que se puede rellenar con el mismo mapa de
-    shape_id (p.ej. SLIDE_GESTIONES) sin importar cuántas copias se hagan."""
-    source = prs.slides[index]
-    dest = prs.slides.add_slide(source.slide_layout)
-    for shp in list(dest.shapes):
-        shp._element.getparent().remove(shp._element)
-    rid_map = {}
-    for shape in source.shapes:
-        el = copy.deepcopy(shape._element)
-        for blip in el.findall(".//" + qn("a:blip")):
-            old_rid = blip.get(qn("r:embed"))
-            if old_rid:
-                if old_rid not in rid_map:
-                    image_part = source.part.rels[old_rid].target_part
-                    rid_map[old_rid] = dest.part.relate_to(image_part, source.part.rels[old_rid].reltype)
-                blip.set(qn("r:embed"), rid_map[old_rid])
-        dest.shapes._spTree.append(el)
-    return dest
-
-
-def _indice_por_slide_id(prs, slide_id):
-    for i, s in enumerate(prs.slides):
-        if s.slide_id == slide_id:
-            return i
-    raise ValueError(f"slide_id {slide_id} no encontrado")
-
-
-def _duplicar_slide_antes_de(prs, index_fuente, slide_id_referencia):
-    """Clona la slide `index_fuente` y la inserta justo antes de la slide con
-    `slide_id_referencia` (recalculado en cada llamada, así que insertar
-    varias veces seguidas las deja en el orden correcto, una tras otra)."""
-    nueva = _duplicar_slide(prs, index_fuente)
-    xml_slides = prs.slides._sldIdLst
-    elemento = list(xml_slides)[-1]  # la recién agregada, siempre queda última
-    xml_slides.remove(elemento)
-    xml_slides.insert(_indice_por_slide_id(prs, slide_id_referencia), elemento)
-    return nueva
+def _fila_tarjetas(slide, top, height, tarjetas, oscuro=False):
+    """tarjetas: lista de (valor, etiqueta). Reparte el ancho del contenido
+    en partes iguales, con un espacio fijo entre tarjetas."""
+    n = len(tarjetas)
+    ancho = (CONTENT_WIDTH - (n - 1) * _GAP) // n
+    for i, (valor, etiqueta) in enumerate(tarjetas):
+        left = CONTENT_LEFT + i * (ancho + _GAP)
+        _tarjeta_kpi(slide, left, top, ancho, height, valor, etiqueta, oscuro=oscuro)
 
 
 def _agregar_grafico_barras(slide, left, top, width, height, titulo, datos, horizontal=True):
@@ -564,8 +420,9 @@ def _agregar_grafico_barras(slide, left, top, width, height, titulo, datos, hori
     chart.has_title = True
     chart.chart_title.text_frame.text = titulo
     run_titulo = chart.chart_title.text_frame.paragraphs[0].runs[0]
-    run_titulo.font.size, run_titulo.font.bold = Pt(11), True
-    run_titulo.font.color.rgb = RGBColor(0x0D, 0x1F, 0x38)
+    run_titulo.font.size, run_titulo.font.bold = Pt(12), True
+    run_titulo.font.color.rgb = br.NAVY
+    run_titulo.font.name = br.FUENTE_TEXTO
 
     plot = chart.plots[0]
     plot.has_data_labels = True
@@ -573,60 +430,323 @@ def _agregar_grafico_barras(slide, left, top, width, height, titulo, datos, hori
     plot.data_labels.number_format = "#,##0"
     plot.data_labels.number_format_is_linked = False
     chart.series[0].format.fill.solid()
-    chart.series[0].format.fill.fore_color.rgb = RGBColor(0x14, 0x7A, 0x86)
+    chart.series[0].format.fill.fore_color.rgb = br.TEAL
 
-    chart.category_axis.tick_labels.font.size = Pt(8)
+    chart.category_axis.tick_labels.font.size = Pt(9)
     chart.value_axis.visible = False
     chart.value_axis.has_major_gridlines = False
     return chart
 
 
-def _construir_slide_top5(prs, s7_id, kpis):
-    """Slide "Top 5 — Concentración de Cartera" (solo Cartera General): 3
-    gráficos nativos (Asegurado / Corredor / Aseguradora), ya que a diferencia
-    de la slide de Distribución (que siempre tiene 4 bloques fijos) acá la
-    cantidad de nombres a graficar puede variar."""
-    slide = _duplicar_slide_antes_de(prs, 4, s7_id)
-    for shape_id in _GRAFICOS_SHAPES_A_QUITAR:
-        _quitar_shape(slide, shape_id)
-    _set_shape_text(slide, SLIDE_GESTIONES["titulo"], "TOP 5 — CONCENTRACIÓN DE CARTERA")
-    _set_shape_text(slide, SLIDE_GESTIONES["subtitulo"], "Cartera General")
+def _tabla(slide, top, height, columnas, filas, filas_max, fuente_header=9.5, fuente_dato=9):
+    """columnas: lista de (encabezado, ancho_emu_o_None, max_chars_o_None).
+    Un ancho None reparte el espacio restante en partes iguales entre las
+    columnas flexibles. filas: lista de listas de valores (ya en el orden de
+    columnas); se truncan solo las columnas con max_chars."""
+    n_cols = len(columnas)
+    n_filas = filas_max + 1
+    anchos_fijos = [a for _, a, _ in columnas if a is not None]
+    n_flex = n_cols - len(anchos_fijos)
+    ancho_flex = (CONTENT_WIDTH - sum(anchos_fijos)) // n_flex if n_flex else 0
+    anchos = [a if a is not None else ancho_flex for _, a, _ in columnas]
 
-    gap = 137160
-    ancho_col = (_GRAFICOS_WIDTH - 2 * gap) // 3
-    lefts = [_GRAFICOS_LEFT, _GRAFICOS_LEFT + ancho_col + gap, _GRAFICOS_LEFT + 2 * (ancho_col + gap)]
+    graphic_frame = slide.shapes.add_table(n_filas, n_cols, CONTENT_LEFT, top, CONTENT_WIDTH, height)
+    tabla_pptx = graphic_frame.table
+    tabla_pptx.horz_banding = False
+    for col, ancho in zip(tabla_pptx.columns, anchos):
+        col.width = ancho
+
+    alto_header = Emu(320040)
+    alto_dato = Emu(max(1, int((height - alto_header) / filas_max)))
+    tabla_pptx.rows[0].height = alto_header
+    for fila in list(tabla_pptx.rows)[1:]:
+        fila.height = alto_dato
+
+    for c, (encabezado, _, _) in enumerate(columnas):
+        cell = tabla_pptx.cell(0, c)
+        _set_text(cell.text_frame, encabezado)
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = br.NAVY
+        cell.margin_left, cell.margin_right = Pt(4), Pt(4)
+        cell.margin_top, cell.margin_bottom = Pt(2), Pt(2)
+        run = cell.text_frame.paragraphs[0].runs[0]
+        run.font.size, run.font.bold = Pt(fuente_header), True
+        run.font.color.rgb = br.BLANCO
+        run.font.name = br.FUENTE_TEXTO
+
+    for i in range(filas_max):
+        for c, (_, _, max_chars) in enumerate(columnas):
+            if i < len(filas):
+                valor = filas[i][c]
+                if max_chars:
+                    valor = _truncar_texto(valor, max_chars)
+            else:
+                valor = ""
+            cell = tabla_pptx.cell(i + 1, c)
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = br.GRIS_CLARO if i % 2 == 0 else br.BLANCO
+            cell.margin_left, cell.margin_right = Pt(4), Pt(4)
+            cell.margin_top, cell.margin_bottom = Pt(1), Pt(1)
+            cell.text_frame.word_wrap = False
+            _set_text(cell.text_frame, str(valor))
+            if cell.text_frame.paragraphs[0].runs:
+                run = cell.text_frame.paragraphs[0].runs[0]
+                run.font.size = Pt(fuente_dato)
+                run.font.color.rgb = br.NAVY
+                run.font.name = br.FUENTE_TEXTO
+    return tabla_pptx
+
+
+# --- Columnas estándar reutilizadas por varias slides ---
+_COLS_CASOS = [
+    ("#", Emu(457200), 3),
+    ("Caso", Emu(822960), 12),
+    ("Siniestro / Nickname", None, 42),
+    ("Divisa", Emu(548640), 6),
+    ("Días", Emu(548640), 6),
+    ("Prob.", Emu(548640), 6),
+    ("Observación", Emu(5516880), 82),
+]
+_COLS_ATENCION = [
+    ("Caso", Emu(822960), 12),
+    ("Siniestro / Nickname", None, 46),
+    ("Prob.", Emu(548640), 6),
+    ("Divisa", Emu(548640), 6),
+    ("MCL", Emu(457200), 3),
+    ("Observación", Emu(6065520), 90),
+]
+_COLS_DETALLE = [
+    ("#", Emu(457200), 3),
+    ("Caso", Emu(822960), 12),
+    ("Siniestro", Emu(1097280), 18),
+    ("Nickname / Asegurado", None, 110),
+    ("Divisa", Emu(548640), 6),
+    ("Días", Emu(548640), 6),
+    ("Prob.", Emu(548640), 6),
+]
+
+
+def _slide_portada(prs, titulo_cartera, fecha_corte, kpis):
+    slide = br.nueva_slide(prs)
+    br.fondo(slide, br.NAVY)
+    br.agregar_portada_header(slide)
+    br.agregar_footer(slide)
+
+    y = Emu(329184) + br.HEADER_ALTO + Emu(365760)
+    br.caja_texto(slide, br.MARGEN_LATERAL, y, br.CONTENIDO_ANCHO, Emu(274320),
+                  "ESTADO DE CARTERA", br.TEAL_CLARO, 13, bold=True)
+    y += Emu(365760)
+    br.caja_texto(slide, br.MARGEN_LATERAL, y, br.CONTENIDO_ANCHO, Emu(822960),
+                  titulo_cartera, br.BLANCO, 34, bold=True, fuente=br.FUENTE_TITULOS)
+    y += Emu(914400)
+    br.caja_texto(slide, br.MARGEN_LATERAL, y, br.CONTENIDO_ANCHO, Emu(274320),
+                  f"Análisis al {fmt_fecha_larga(fecha_corte)}", br.TEAL_PALIDO, 13)
+
+    y_tarjetas = Emu(4389120)
+    _fila_tarjetas(slide, y_tarjetas, Emu(1189992), [
+        (str(kpis["total"]), "CASOS ACTIVOS"),
+        (fmt_uf(kpis["uf_total"]), "PÉRDIDA BRUTA UF"),
+        (fmt_usd_m(kpis["usd_total"]), "PÉRDIDA BRUTA USD"),
+    ], oscuro=True)
+
+
+def _slide_resumen(prs, titulo_cartera, kpis, numero):
+    slide = _slide_base(prs, "RESUMEN GENERAL DE CARTERA", etiqueta=titulo_cartera, numero=numero)
+    _fila_tarjetas(slide, CONTENT_TOP, _KPI_ALTO, [
+        (str(kpis["total"]), "CARTERA ACTIVA (CASOS)"),
+        (f"{kpis['div_ing']} / {kpis['div_otros']}", "INGENIERÍA / OTRAS DIVISIONES"),
+        (f"{kpis['uf_count']} UF · {kpis['usd_count']} USD", "CASOS POR DIVISA"),
+    ])
+    _fila_tarjetas(slide, CONTENT_TOP + _KPI_ALTO + _GAP, _KPI_ALTO, [
+        (fmt_uf(kpis["uf_total"]), "EXPOSICIÓN TOTAL UF"),
+        (fmt_usd_m(kpis["usd_total"]), "EXPOSICIÓN TOTAL USD"),
+        (f"{kpis['mcl_pct']}% · {kpis['mcl_count']} casos", "MAYOR CUANTÍA (MCL)"),
+    ])
+
+
+def _slide_distribucion(prs, kpis, numero):
+    slide = _slide_base(prs, "DISTRIBUCIÓN DE CARTERA", etiqueta="MCL vs. Otros · Top 4 Asegurados", numero=numero)
+    _fila_tarjetas(slide, CONTENT_TOP, _KPI_ALTO, [
+        (f"{kpis['mcl_count']} casos · {kpis['mcl_pct']}%",
+         f"MAYOR CUANTÍA  —  {fmt_uf(kpis['mcl_uf'])} + {fmt_usd_m(kpis['mcl_usd'])}"),
+        (f"{kpis['otros_count']} casos · {kpis['otros_pct']}%",
+         f"OTROS CASOS  —  {fmt_uf(kpis['otros_uf'])} + {fmt_usd_m(kpis['otros_usd'])}"),
+    ])
+    datos = list(kpis["top4"]) + [("Otros asegurados", kpis["aseg_otros"])]
+    top_chart = CONTENT_TOP + _KPI_ALTO + _GAP
+    _agregar_grafico_barras(slide, CONTENT_LEFT, top_chart, CONTENT_WIDTH, CONTENT_BOTTOM - top_chart,
+                             "Concentración de cartera por Asegurado", datos, horizontal=True)
+
+
+def _slide_probabilidad(prs, kpis, numero):
+    slide = _slide_base(prs, "PROBABILIDAD DE CIERRE 2026", numero=numero)
+    tc = kpis["tier_counts"]
+    categorias = [
+        f"100% – Cierta ({tc[100]})", f"75% – Alt. probable ({tc[75]})",
+        f"50% – Podría ser ({tc[50]})", f"0% – Nula ({tc[0]})",
+    ]
+    datos = list(zip(categorias, [tc[100], tc[75], tc[50], tc[0]]))
+    _agregar_grafico_barras(slide, CONTENT_LEFT, CONTENT_TOP, CONTENT_WIDTH, CONTENT_HEIGHT,
+                             "Casos por probabilidad de cierre 2026", datos, horizontal=True)
+
+
+def _slide_top5(prs, kpis, numero):
+    slide = _slide_base(prs, "TOP 5 — CONCENTRACIÓN DE CARTERA", etiqueta="Cartera General", numero=numero)
+    ancho_col = (CONTENT_WIDTH - 2 * _GAP) // 3
+    lefts = [CONTENT_LEFT, CONTENT_LEFT + ancho_col + _GAP, CONTENT_LEFT + 2 * (ancho_col + _GAP)]
     graficos = [
         ("Top 5 Asegurados", kpis["top5_asegurado"]),
         ("Top 5 Corredores", kpis["top5_corredor"]),
         ("Top 5 Aseguradoras", kpis["top5_aseguradora"]),
     ]
     for left, (titulo, datos) in zip(lefts, graficos):
-        _agregar_grafico_barras(slide, left, _GRAFICOS_TOP, ancho_col, _GRAFICOS_HEIGHT, titulo, datos, horizontal=True)
-    return slide
+        _agregar_grafico_barras(slide, left, CONTENT_TOP, ancho_col, CONTENT_HEIGHT, titulo, datos, horizontal=True)
 
 
-def _construir_slide_probabilidad_por_tier(prs, s7_id, titulo, etiqueta, tier_counts, tier_honorarios):
-    """Slide "Casos MCL/No MCL por Probabilidad de Cierre 2026" (solo Cartera
-    General): cantidad de casos y honorarios totales en gráficos separados
-    (no comparten eje, ya que una escala es "casos" y la otra "UF")."""
-    slide = _duplicar_slide_antes_de(prs, 4, s7_id)
-    for shape_id in _GRAFICOS_SHAPES_A_QUITAR:
-        _quitar_shape(slide, shape_id)
-    _set_shape_text(slide, SLIDE_GESTIONES["titulo"], titulo)
-    _set_shape_text(slide, SLIDE_GESTIONES["subtitulo"], "Cartera General")
-
+def _slide_probabilidad_por_tier(prs, titulo, etiqueta, tier_counts, tier_honorarios, numero):
+    slide = _slide_base(prs, titulo, etiqueta="Cartera General", numero=numero)
     categorias = ["100% – Cierta", "75% – Alt. probable", "50% – Podría ser", "0% – Nula"]
     tc, th = tier_counts, tier_honorarios
     datos_cantidad = list(zip(categorias, [tc[100], tc[75], tc[50], tc[0]]))
     datos_honorarios = list(zip(categorias, [round(th[100]), round(th[75]), round(th[50]), round(th[0])]))
 
-    gap = 182880
-    ancho_col = (_GRAFICOS_WIDTH - gap) // 2
-    _agregar_grafico_barras(slide, _GRAFICOS_LEFT, _GRAFICOS_TOP, ancho_col, _GRAFICOS_HEIGHT,
+    ancho_col = (CONTENT_WIDTH - _GAP) // 2
+    _agregar_grafico_barras(slide, CONTENT_LEFT, CONTENT_TOP, ancho_col, CONTENT_HEIGHT,
                              f"Cantidad de casos {etiqueta}", datos_cantidad, horizontal=False)
-    _agregar_grafico_barras(slide, _GRAFICOS_LEFT + ancho_col + gap, _GRAFICOS_TOP, ancho_col, _GRAFICOS_HEIGHT,
+    _agregar_grafico_barras(slide, CONTENT_LEFT + ancho_col + _GAP, CONTENT_TOP, ancho_col, CONTENT_HEIGHT,
                              f"Honorarios totales {etiqueta} (UF)", datos_honorarios, horizontal=False)
-    return slide
+
+
+def _slide_tiempos_residencia(prs, titulo_cartera, kpis, tabla, numero):
+    etiqueta_promedio = "Promedio cartera" if titulo_cartera == "Cartera General" else f"Promedio cartera {titulo_cartera}"
+    slide = _slide_base(prs, "TIEMPOS DE RESIDENCIA", etiqueta="Top 10 más antiguos", numero=numero)
+    _fila_tarjetas(slide, CONTENT_TOP, _KPI_ALTO, [
+        (f"{kpis['dias_max']} días", "CASO MÁS ANTIGUO"),
+        (f"~{kpis['dias_prom']} días", etiqueta_promedio.upper()),
+        (f"{kpis['dias_600']} caso" + ("s" if kpis["dias_600"] != 1 else ""), "CON MÁS DE 600 DÍAS"),
+    ])
+
+    top10_antiguos = tabla.sort_values("Dias", ascending=False).head(10)
+    filas = []
+    for i, (_, row) in enumerate(top10_antiguos.iterrows(), start=1):
+        observacion = row["Observacion"] or row["Observacion_sugerida"]
+        filas.append([
+            i, row["Caso"], _fila_siniestro_nickname(row["Numero_Siniestro"], row["Nickname"]), row["Divisa"],
+            row["Dias"], f"{int(row['Prob'])}%", observacion,
+        ])
+    top_tabla = CONTENT_TOP + _KPI_ALTO + _GAP
+    _tabla(slide, top_tabla, CONTENT_BOTTOM - top_tabla, _COLS_CASOS, filas, filas_max=10)
+
+
+def _slide_atencion(prs, kpis, tabla, alerta_prioritaria, numero):
+    slide = _slide_base(prs, "⚠  CASOS QUE REQUIEREN ATENCIÓN ESPECIAL", numero=numero)
+    atencion = tabla[pd.to_numeric(tabla["Prob"], errors="coerce").fillna(100) < 100]
+    atencion = atencion.sort_values("Perdida_bruta", ascending=False).head(10)
+
+    intro = (
+        f"{len(atencion)} casos con probabilidad de cierre inferior al 100% acumulan exposición "
+        f"significativa. Ordenados por magnitud de pérdida bruta."
+    )
+    br.caja_texto(slide, CONTENT_LEFT, CONTENT_TOP, CONTENT_WIDTH, Emu(411480), intro, br.GRIS_SLATE, 11)
+
+    top_alerta = CONTENT_TOP + Emu(457200)
+    alto_alerta = Emu(685800)
+    br.rect(slide, CONTENT_LEFT, top_alerta, CONTENT_WIDTH, alto_alerta, br.GRIS_CLARO)
+    br.rect(slide, CONTENT_LEFT, top_alerta, Emu(54864), alto_alerta, br.TEAL_OSCURO)
+    br.caja_texto(slide, CONTENT_LEFT + Emu(182880), top_alerta + Emu(45720), CONTENT_WIDTH - Emu(365760), Emu(594360),
+                  alerta_prioritaria or "Sin alertas prioritarias registradas.", br.NAVY, 11, italic=True)
+
+    filas = []
+    for _, row in atencion.iterrows():
+        observacion = row["Observacion"] or row["Observacion_sugerida"]
+        filas.append([
+            row["Caso"], _fila_siniestro_nickname(row["Numero_Siniestro"], row["Nickname"]), f"{int(row['Prob'])}%",
+            row["Divisa"], "✓" if row["MCL"] else "", observacion,
+        ])
+    top_tabla = top_alerta + alto_alerta + _GAP
+    _tabla(slide, top_tabla, CONTENT_BOTTOM - top_tabla, _COLS_ATENCION, filas, filas_max=10)
+
+
+def _slide_gestiones_iniciales(prs, tabla, numero):
+    slide = _slide_base(prs, "GESTIONES INICIALES", etiqueta="< 2 semanas de antigüedad", numero=numero)
+
+    recientes = tabla[tabla["Dias"] < 14].sort_values("Dias", ascending=False)
+    sin_gestion = recientes[
+        (recientes["Observacion"].astype(str).str.strip() == "")
+        & (recientes["Observacion_sugerida"].astype(str).str.strip() == "")
+    ]
+    dias_prom_recientes = round(recientes["Dias"].mean()) if len(recientes) else 0
+
+    _fila_tarjetas(slide, CONTENT_TOP, _KPI_ALTO, [
+        (f"{len(recientes)} caso" + ("s" if len(recientes) != 1 else ""), "INGRESADOS < 2 SEMANAS"),
+        (f"{len(sin_gestion)} caso" + ("s" if len(sin_gestion) != 1 else ""), "SIN GESTIÓN INICIAL REGISTRADA"),
+        (f"~{dias_prom_recientes} días", "ANTIGÜEDAD PROMEDIO DEL GRUPO"),
+    ])
+
+    filas = []
+    for i, (_, row) in enumerate(recientes.head(10).iterrows(), start=1):
+        observacion = row["Observacion"] or row["Observacion_sugerida"] or "Sin gestión registrada"
+        filas.append([
+            i, row["Caso"], _fila_siniestro_nickname(row["Numero_Siniestro"], row["Nickname"]), row["Divisa"],
+            row["Dias"], f"{int(row['Prob'])}%", observacion,
+        ])
+    top_tabla = CONTENT_TOP + _KPI_ALTO + _GAP
+    _tabla(slide, top_tabla, CONTENT_BOTTOM - top_tabla, _COLS_CASOS, filas, filas_max=10)
+
+
+def _slide_detalle_completo(prs, pagina, num_pagina, total_paginas, total_casos, kpis, numero):
+    slide = _slide_base(
+        prs, "DETALLE COMPLETO DE CARTERA",
+        etiqueta=f"Página {num_pagina} de {total_paginas}  ·  {total_casos} casos", numero=numero,
+    )
+    _fila_tarjetas(slide, CONTENT_TOP, _KPI_ALTO, [
+        (f"{total_casos} caso" + ("s" if total_casos != 1 else ""), "TOTAL CARTERA FILTRADA"),
+        (f"{num_pagina} / {total_paginas}", "PÁGINA"),
+        (f"{fmt_uf(kpis['uf_total'])}  +  {fmt_usd_m(kpis['usd_total'])}", "EXPOSICIÓN TOTAL (UF + USD)"),
+    ])
+
+    filas = []
+    inicio = (num_pagina - 1) * 20 + 1
+    for i, (_, row) in enumerate(pagina.iterrows(), start=inicio):
+        filas.append([
+            i, row["Caso"], row["Numero_Siniestro"], row["Nickname"], row["Divisa"], row["Dias"], f"{int(row['Prob'])}%",
+        ])
+    top_tabla = CONTENT_TOP + _KPI_ALTO + _GAP
+    _tabla(slide, top_tabla, CONTENT_BOTTOM - top_tabla, _COLS_DETALLE, filas, filas_max=20,
+           fuente_header=8.5, fuente_dato=8)
+
+
+def _slide_proximos_pasos(prs, pasos, fecha_corte, titulo_cartera, numero):
+    slide = _slide_base(prs, "PRÓXIMOS PASOS Y FOCOS DE GESTIÓN", numero=numero)
+    pasos = (pasos + [{}] * 5)[:5]
+    alto_fila = (CONTENT_HEIGHT - 2 * _GAP) // 3
+    ancho_col = (CONTENT_WIDTH - _GAP) // 2
+    posiciones = [
+        (CONTENT_LEFT, CONTENT_TOP),
+        (CONTENT_LEFT + ancho_col + _GAP, CONTENT_TOP),
+        (CONTENT_LEFT, CONTENT_TOP + alto_fila + _GAP),
+        (CONTENT_LEFT + ancho_col + _GAP, CONTENT_TOP + alto_fila + _GAP),
+        (CONTENT_LEFT, CONTENT_TOP + 2 * (alto_fila + _GAP)),
+    ]
+    for (left, top), paso in zip(posiciones, pasos):
+        titulo = paso.get("titulo", "") if paso else ""
+        desc = paso.get("desc", "") if paso else ""
+        if not (titulo or desc):
+            continue
+        br.rect(slide, left, top, ancho_col, alto_fila, br.BLANCO)
+        br.rect(slide, left, top, ancho_col, Emu(54864), br.TEAL)
+        pad = Emu(182880)
+        br.caja_texto(slide, left + pad, top + Emu(109728), ancho_col - 2 * pad, Emu(365760),
+                      titulo, br.NAVY, 13, bold=True, fuente=br.FUENTE_TITULOS)
+        br.caja_texto(slide, left + pad, top + Emu(475488), ancho_col - 2 * pad, alto_fila - Emu(594360),
+                      desc, br.GRIS_SLATE, 10.5)
+
+    pie = (
+        f"JPV Asociados · Sedgwick Alliance  ·  Análisis al {fmt_fecha_larga(fecha_corte)}  ·  "
+        f"{titulo_cartera if titulo_cartera.lower().startswith('cartera') else f'Cartera {titulo_cartera}'}"
+    )
+    br.caja_texto(slide, CONTENT_LEFT, CONTENT_TOP + 3 * alto_fila + 2 * _GAP - Emu(228600),
+                  CONTENT_WIDTH, Emu(228600), pie, br.GRIS_SLATE, 9, italic=True)
 
 
 def generar_pptx(fecha_corte, titulo_cartera, tabla, pasos, alerta_prioritaria):
@@ -637,211 +757,46 @@ def generar_pptx(fecha_corte, titulo_cartera, tabla, pasos, alerta_prioritaria):
     tabla: DataFrame de preparar_tabla_casos() ya editado por el usuario
            (columnas Caso, Nickname, Divisa, Perdida_bruta, Dias, Division, MCL, Prob, Observacion)
     pasos: lista de hasta 5 dicts {'titulo':..., 'desc':...}
-    alerta_prioritaria: texto libre para el callout del slide 6
+    alerta_prioritaria: texto libre para el callout de "Atención Especial"
     """
     kpis = calcular_kpis(tabla)
-    prs = Presentation(TEMPLATE_PATH)
+    prs = br.nueva_presentacion()
+    n = 1
 
-    # --- Slide 1: Portada ---
-    s1 = prs.slides[0]
-    _set_shape_text(s1, SLIDE1["titulo_cartera"], titulo_cartera)
-    _set_shape_text(s1, SLIDE1["fecha_corte"], fmt_fecha_larga(fecha_corte))
-    _set_shape_text(s1, SLIDE1["casos_activos"], str(kpis["total"]))
-    _set_shape_text(s1, SLIDE1["perdida_uf"], fmt_uf(kpis["uf_total"]))
-    _set_shape_text(s1, SLIDE1["perdida_usd"], fmt_usd_m(kpis["usd_total"]))
+    _slide_portada(prs, titulo_cartera, fecha_corte, kpis)
+    n += 1
+    _slide_resumen(prs, titulo_cartera, kpis, n); n += 1
+    _slide_distribucion(prs, kpis, n); n += 1
+    _slide_probabilidad(prs, kpis, n); n += 1
 
-    # --- Slide 2: Resumen general ---
-    s2 = prs.slides[1]
-    _set_shape_text(s2, SLIDE2["titulo_cartera"], titulo_cartera)
-    _set_shape_text(s2, SLIDE2["cartera_activa"], str(kpis["total"]))
-    _set_shape_text(s2, SLIDE2["division_split"], f"{kpis['div_ing']} / {kpis['div_otros']}")
-    _set_shape_text(s2, SLIDE2["divisa_split"], f"{kpis['uf_count']} UF · {kpis['usd_count']} USD")
-    _set_shape_text(s2, SLIDE2["exposicion_uf"], fmt_uf(kpis["uf_total"]))
-    _set_shape_text(s2, SLIDE2["exposicion_usd"], fmt_usd_m(kpis["usd_total"]))
-    _set_shape_text(s2, SLIDE2["mcl_pct"], f"{kpis['mcl_pct']}% MCL")
-    _set_shape_text(s2, SLIDE2["mcl_casos"], f"{kpis['mcl_count']} casos mayor cuantía")
-
-    # --- Slide 3: Distribución MCL vs Otros ---
-    s3 = prs.slides[2]
-    _set_shape_text(s3, SLIDE3["mcl_count"], str(kpis["mcl_count"]))
-    _set_shape_text(s3, SLIDE3["mcl_pct_line"], f"casos  ·  {kpis['mcl_pct']}% de la cartera")
-    _set_shape_text(s3, SLIDE3["mcl_sum_line"], f"{fmt_uf(kpis['mcl_uf'])}  +  {fmt_usd_m(kpis['mcl_usd'])}")
-    _set_shape_text(s3, SLIDE3["otros_count"], str(kpis["otros_count"]))
-    _set_shape_text(s3, SLIDE3["otros_pct_line"], f"casos  ·  {kpis['otros_pct']}% de la cartera")
-    _set_shape_text(s3, SLIDE3["otros_sum_line"], f"{fmt_uf(kpis['otros_uf'])}  +  {fmt_usd_m(kpis['otros_usd'])}")
-    nombre_ids = ["aseg1_nombre", "aseg2_nombre", "aseg3_nombre", "aseg4_nombre"]
-    barra_ids = ["aseg1_barra", "aseg2_barra", "aseg3_barra", "aseg4_barra"]
-    count_ids = ["aseg1_count", "aseg2_count", "aseg3_count", "aseg4_count"]
-
-    # El orden (Top 4 + Otros) y el largo de la barra los define la misma
-    # cantidad de casos que muestra el número — evita sugerir un monto de
-    # pérdida/pago sobre casos cuya liquidación todavía no termina.
-    BARRA_IZQUIERDA = 2926080
-    BARRA_ANCHO_MAX = 5120640
-    BARRA_ANCHO_MIN = 91440
-    BARRA_ESPACIO_TEXTO = 91440
-    max_count = max([c for _, c in kpis["top4"]] + [kpis["aseg_otros"]], default=0)
-
-    def _ancho_barra(valor_count):
-        if max_count <= 0:
-            return BARRA_ANCHO_MIN
-        return max(BARRA_ANCHO_MIN, round(valor_count / max_count * BARRA_ANCHO_MAX))
-
-    def _dibujar_barra(barra_id, count_id, valor_count):
-        ancho = _ancho_barra(valor_count)
-        _get_shape(s3, SLIDE3[barra_id]).width = ancho
-        shape_count = _get_shape(s3, SLIDE3[count_id])
-        shape_count.left = BARRA_IZQUIERDA + ancho + BARRA_ESPACIO_TEXTO
-        _set_text(shape_count.text_frame, str(valor_count))
-
-    for (nombre, count), nombre_id, barra_id, count_id in zip(kpis["top4"], nombre_ids, barra_ids, count_ids):
-        _set_shape_text(s3, SLIDE3[nombre_id], str(nombre))
-        _dibujar_barra(barra_id, count_id, count)
-    _dibujar_barra("aseg_otros_barra", "aseg_otros_count", kpis["aseg_otros"])
-
-    # --- Slide 4: Probabilidad de cierre ---
-    s4 = prs.slides[3]
-    tc = kpis["tier_counts"]
-    _set_shape_text(s4, SLIDE4["tier100"], f"{tc[100]} caso" + ("s" if tc[100] != 1 else ""))
-    _set_shape_text(s4, SLIDE4["tier75"], f"{tc[75]} caso" + ("s" if tc[75] != 1 else ""))
-    _set_shape_text(s4, SLIDE4["tier50"], f"{tc[50]} caso" + ("s" if tc[50] != 1 else ""))
-    _set_shape_text(s4, SLIDE4["tier0"], f"{tc[0]} caso" + ("s" if tc[0] != 1 else ""))
-    for shape in s4.shapes:
-        if shape.has_chart:
-            cd = CategoryChartData()
-            cd.categories = [
-                f"100% – Cierta ({tc[100]})",
-                f"75% – Alt. probable ({tc[75]})",
-                f"50% – Podría ser ({tc[50]})",
-                f"0% – Nula ({tc[0]})",
-            ]
-            cd.add_series("Prob. Cierre", (tc[100], tc[75], tc[50], tc[0]))
-            shape.chart.replace_data(cd)
-
-    # --- Slide 5: Tiempos de residencia (Top 10 más antiguos) ---
-    s5 = prs.slides[4]
-    _set_shape_text(s5, SLIDE5["caso_mas_antiguo"], f"{kpis['dias_max']} días")
-    _set_shape_text(s5, SLIDE5["promedio_cartera"], f"~{kpis['dias_prom']} días")
-    etiqueta_promedio = "Promedio cartera" if titulo_cartera == "Cartera General" else f"Promedio cartera {titulo_cartera}"
-    _set_shape_text(s5, SLIDE5["promedio_cartera_label"], etiqueta_promedio)
-    _set_shape_text(s5, SLIDE5["casos_600"], f"{kpis['dias_600']} caso" + ("s" if kpis["dias_600"] != 1 else ""))
-    top10_antiguos = tabla.sort_values("Dias", ascending=False).head(10)
-    filas = []
-    for i, (_, row) in enumerate(top10_antiguos.iterrows(), start=1):
-        observacion = row["Observacion"] or row["Observacion_sugerida"]
-        filas.append([
-            i, row["Caso"], _fila_siniestro_nickname(row["Numero_Siniestro"], row["Nickname"]), row["Divisa"], row["Dias"],
-            f"{int(row['Prob'])}%", _truncar_texto(observacion, 100),
-        ])
-    _fill_table_rows(_get_table(s5, SLIDE5["tabla"]), filas)
-
-    # --- Slide 6: Casos que requieren atención especial (Prob < 100%) ---
-    s6 = prs.slides[5]
-    atencion = tabla[pd.to_numeric(tabla["Prob"], errors="coerce").fillna(100) < 100]
-    atencion = atencion.sort_values("Perdida_bruta", ascending=False).head(10)
-    _set_shape_text(
-        s6, SLIDE6["intro"],
-        f"{len(atencion)} casos con probabilidad de cierre inferior al 100% acumulan exposición "
-        f"significativa. Ordenados por magnitud de pérdida bruta.",
-    )
-    _set_shape_text(s6, SLIDE6["alerta"], alerta_prioritaria)
-    filas = []
-    for _, row in atencion.iterrows():
-        observacion = row["Observacion"] or row["Observacion_sugerida"]
-        filas.append([
-            row["Caso"], _fila_siniestro_nickname(row["Numero_Siniestro"], row["Nickname"]), f"{int(row['Prob'])}%", row["Divisa"],
-            "✓" if row["MCL"] else "", _truncar_texto(observacion, 130),
-        ])
-    _fill_table_rows(_get_table(s6, SLIDE6["tabla"]), filas)
-
-    # --- Slide "Gestiones Iniciales" (penúltima): casos ingresados hace menos de 2 semanas ---
-    s_gestiones = prs.slides[6]
-    _set_shape_text(s_gestiones, SLIDE_GESTIONES["titulo"], "GESTIONES INICIALES")
-    _set_shape_text(s_gestiones, SLIDE_GESTIONES["subtitulo"], "Casos ingresados hace menos de 2 semanas")
-
-    recientes = tabla[tabla["Dias"] < 14].sort_values("Dias", ascending=False)
-    sin_gestion = recientes[
-        (recientes["Observacion"].astype(str).str.strip() == "")
-        & (recientes["Observacion_sugerida"].astype(str).str.strip() == "")
-    ]
-    dias_prom_recientes = round(recientes["Dias"].mean()) if len(recientes) else 0
-
-    _set_shape_text(s_gestiones, SLIDE_GESTIONES["kpi1_valor"], f"{len(recientes)} caso" + ("s" if len(recientes) != 1 else ""))
-    _set_shape_text(s_gestiones, SLIDE_GESTIONES["kpi1_label"], "Ingresados < 2 semanas")
-    _set_shape_text(s_gestiones, SLIDE_GESTIONES["kpi2_valor"], f"{len(sin_gestion)} caso" + ("s" if len(sin_gestion) != 1 else ""))
-    _set_shape_text(s_gestiones, SLIDE_GESTIONES["kpi2_label"], "Sin gestión inicial registrada")
-    _set_shape_text(s_gestiones, SLIDE_GESTIONES["kpi3_valor"], f"~{dias_prom_recientes} días")
-    _set_shape_text(s_gestiones, SLIDE_GESTIONES["kpi3_label"], "Antigüedad promedio del grupo")
-
-    filas = []
-    for i, (_, row) in enumerate(recientes.head(10).iterrows(), start=1):
-        observacion = row["Observacion"] or row["Observacion_sugerida"] or "Sin gestión registrada"
-        filas.append([
-            i, row["Caso"], _fila_siniestro_nickname(row["Numero_Siniestro"], row["Nickname"]), row["Divisa"], row["Dias"],
-            f"{int(row['Prob'])}%", _truncar_texto(observacion, 100),
-        ])
-    _fill_table_rows(_get_table(s_gestiones, SLIDE_GESTIONES["tabla"]), filas)
-
-    # --- Slide 7: Próximos pasos y focos de gestión ---
-    s7 = prs.slides[7]
-
-    # --- Slides "Detalle Completo de Cartera" (una o más según la cantidad de
-    # casos): se insertan justo antes de "Próximos pasos", clonando el
-    # encabezado/KPIs de Tiempos de Residencia pero con una tabla propia más
-    # densa (hasta 20 casos por página en vez de 10). ---
-    s7_id = s7.slide_id
-
-    # --- Slides exclusivas de Cartera General (sin filtro de Corredora/
-    # Aseguradora/Asegurado/Ajustador): Top 5 de concentración y Casos MCL
-    # por Probabilidad de Cierre 2026. Se insertan antes de "Próximos pasos",
-    # junto con el resto de las slides adicionales. ---
-    if titulo_cartera == "Cartera General":
-        _construir_slide_top5(prs, s7_id, kpis)
-        _construir_slide_probabilidad_por_tier(
-            prs, s7_id, "CASOS MCL POR PROBABILIDAD DE CIERRE 2026", "MCL",
-            kpis["mcl_tier_counts"], kpis["mcl_tier_honorarios"],
+    es_cartera_general = titulo_cartera == "Cartera General"
+    if es_cartera_general:
+        _slide_top5(prs, kpis, n); n += 1
+        _slide_probabilidad_por_tier(
+            prs, "CASOS MCL POR PROBABILIDAD DE CIERRE 2026", "MCL",
+            kpis["mcl_tier_counts"], kpis["mcl_tier_honorarios"], n,
         )
-        _construir_slide_probabilidad_por_tier(
-            prs, s7_id, "CASOS NO MCL POR PROBABILIDAD DE CIERRE 2026", "No MCL",
-            kpis["otros_tier_counts"], kpis["otros_tier_honorarios"],
+        n += 1
+        _slide_probabilidad_por_tier(
+            prs, "CASOS NO MCL POR PROBABILIDAD DE CIERRE 2026", "No MCL",
+            kpis["otros_tier_counts"], kpis["otros_tier_honorarios"], n,
         )
+        n += 1
+
+    _slide_tiempos_residencia(prs, titulo_cartera, kpis, tabla, n); n += 1
+    _slide_atencion(prs, kpis, tabla, alerta_prioritaria, n); n += 1
+    _slide_gestiones_iniciales(prs, tabla, n); n += 1
 
     detalle = tabla.sort_values("Dias", ascending=False).reset_index(drop=True)
+    filas_max_detalle = 20
     paginas_detalle = [
-        detalle.iloc[i:i + _TABLA_DETALLE_FILAS_MAX] for i in range(0, len(detalle), _TABLA_DETALLE_FILAS_MAX)
+        detalle.iloc[i:i + filas_max_detalle] for i in range(0, len(detalle), filas_max_detalle)
     ]
-
     for num_pagina, pagina in enumerate(paginas_detalle, start=1):
-        s_detalle = _duplicar_slide_antes_de(prs, 4, s7_id)
-        _quitar_shape(s_detalle, SLIDE_GESTIONES["tabla"])
-        _set_shape_text(s_detalle, SLIDE_GESTIONES["titulo"], "DETALLE COMPLETO DE CARTERA")
-        _set_shape_text(
-            s_detalle, SLIDE_GESTIONES["subtitulo"],
-            f"Página {num_pagina} de {len(paginas_detalle)}  ·  {len(detalle)} casos",
-        )
-        _set_shape_text(s_detalle, SLIDE_GESTIONES["kpi1_valor"], f"{len(detalle)} caso" + ("s" if len(detalle) != 1 else ""))
-        _set_shape_text(s_detalle, SLIDE_GESTIONES["kpi1_label"], "Total cartera filtrada")
-        _set_shape_text(s_detalle, SLIDE_GESTIONES["kpi2_valor"], f"{num_pagina} / {len(paginas_detalle)}")
-        _set_shape_text(s_detalle, SLIDE_GESTIONES["kpi2_label"], "Página")
-        _set_shape_text(s_detalle, SLIDE_GESTIONES["kpi3_valor"], f"{fmt_uf(kpis['uf_total'])}  +  {fmt_usd_m(kpis['usd_total'])}")
-        _set_shape_text(s_detalle, SLIDE_GESTIONES["kpi3_label"], "Exposición total (UF + USD)")
+        _slide_detalle_completo(prs, pagina, num_pagina, len(paginas_detalle), len(detalle), kpis, n)
+        n += 1
 
-        filas = []
-        inicio = (num_pagina - 1) * _TABLA_DETALLE_FILAS_MAX + 1
-        for i, (_, row) in enumerate(pagina.iterrows(), start=inicio):
-            filas.append([
-                i, row["Caso"], row["Numero_Siniestro"], row["Nickname"], row["Divisa"], row["Dias"], f"{int(row['Prob'])}%",
-            ])
-        _construir_tabla_detalle(s_detalle, filas)
-
-    for i, ids in enumerate(SLIDE7["pasos"]):
-        paso = pasos[i] if i < len(pasos) else {"titulo": "", "desc": ""}
-        _set_shape_text(s7, ids["titulo"], paso.get("titulo", ""))
-        _set_shape_text(s7, ids["desc"], paso.get("desc", ""))
-    _set_shape_text(
-        s7, SLIDE7["footer"],
-        f"JPV Asociados · Ajustadores Especializados  ·  Análisis al {fmt_fecha_larga(fecha_corte)}  ·  Cartera {titulo_cartera}",
-    )
+    _slide_proximos_pasos(prs, pasos, fecha_corte, titulo_cartera, n)
 
     output = io.BytesIO()
     prs.save(output)
